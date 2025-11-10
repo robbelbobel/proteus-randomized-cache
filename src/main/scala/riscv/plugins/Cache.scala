@@ -69,7 +69,8 @@ class Cache(
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
-      private val cache = Vec.fill(sets)(Vec.fill(skews)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
+      private val cache =
+        Vec.fill(sets)(Vec.fill(skews)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
 
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
