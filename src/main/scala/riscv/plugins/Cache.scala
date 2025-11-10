@@ -7,6 +7,7 @@ import spinal.lib._
 class Cache(
     sets: Int,
     ways: Int,
+    skews: Int,
     busFilter: ((Stage, MemBus, MemBus) => Unit) => Unit,
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
@@ -68,7 +69,7 @@ class Cache(
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
-      private val cache = Vec.fill(sets)(Vec.fill(ways)(RegInit(CacheEntry().getZero)))
+      private val cache = Vec.fill(sets)(Vec.fill(skews)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
 
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
@@ -96,7 +97,7 @@ class Cache(
         val result = UInt(log2Up(ways) bits)
         result := 0
         for (i <- 0 until ways) {
-          when(cache(set)(i).age === ways - 1 || !cache(set)(i).valid) {
+          when(cache(set)(0)(i).age === ways - 1 || !cache(set)(0)(i).valid) {
             result := i
           }
         }
@@ -105,16 +106,16 @@ class Cache(
 
       private def increaseAgesUpTo(set: UInt, oldest: UInt): Unit = {
         for (i <- 0 until ways) {
-          when(cache(set)(i).age < oldest) {
-            cache(set)(i).age := cache(set)(i).age + 1
+          when(cache(set)(0)(i).age < oldest) {
+            cache(set)(0)(i).age := cache(set)(0)(i).age + 1
           }
         }
       }
 
       private def decreaseAgesUntil(set: UInt, youngest: UInt): Unit = {
         for (i <- 0 until ways) {
-          when(cache(set)(i).age > youngest) {
-            cache(set)(i).age := cache(set)(i).age - 1
+          when(cache(set)(0)(i).age > youngest) {
+            cache(set)(0)(i).age := cache(set)(0)(i).age - 1
           }
         }
       }
@@ -179,10 +180,10 @@ class Cache(
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
           val way = oldestWay(setIndex)
-          cache(setIndex)(way).valid := True
-          cache(setIndex)(way).tag := tag
-          cache(setIndex)(way).value := external.rsp.rdata
-          cache(setIndex)(way).age := U(0).resized
+          cache(setIndex)(0)(way).valid := True
+          cache(setIndex)(0)(way).tag := tag
+          cache(setIndex)(0)(way).value := external.rsp.rdata
+          cache(setIndex)(0)(way).age := U(0).resized
           increaseAgesUpTo(setIndex, ways - 1)
         }
         external.rsp.ready := True
@@ -301,7 +302,7 @@ class Cache(
       }
 
       private def wayForAddress(address: UInt): Flow[UInt] = {
-        val set = cache(getSetIndex(address))
+        val set = cache(getSetIndex(address))(0)
         val tag = getTagBits(address)
         val result = Flow(UInt(log2Up(ways) bits))
         result.setIdle()
@@ -374,7 +375,7 @@ class Cache(
 
         val targetWay = wayForAddress(address)
         val setIndex = getSetIndex(address)
-        val cacheSet = cache(setIndex)
+        val cacheSet = cache(setIndex)(0)
         val tagBits = getTagBits(address)
 
         when(targetWay.valid) {
@@ -429,10 +430,10 @@ class Cache(
             storeInCycle := True
             // write command: invalidates line and forwards to external bus
             for (i <- 0 until ways) {
-              when(cache(indexBits)(i).tag === tagBits) {
-                cache(indexBits)(i).valid := False
-                cache(indexBits)(i).age := ways - 1
-                decreaseAgesUntil(indexBits, cache(indexBits)(i).age)
+              when(cache(indexBits)(0)(i).tag === tagBits) {
+                cache(indexBits)(0)(i).valid := False
+                cache(indexBits)(0)(i).age := ways - 1
+                decreaseAgesUntil(indexBits, cache(indexBits)(0)(i).age)
               }
             }
 
