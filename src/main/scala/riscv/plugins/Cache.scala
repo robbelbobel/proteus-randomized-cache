@@ -17,6 +17,14 @@ class Cache(
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setIndexBits = log2Up(sets)
 
+  // Initialize Key (4 Stages like CAESER)
+  private val feistelStages = 4
+  private val key = Vec.fill(feistelStages)(Reg(UInt(setIndexBits / 2 bits)))
+  key(0) := 0x00
+  key(1) := 0x01
+  key(2) := 0x02
+  key(3) := 0x03
+
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
@@ -25,7 +33,24 @@ class Cache(
   }
 
   private def getSetIndex(address: UInt): UInt = {
-    address(byteIndexBits + wordIndexBits, log2Up(sets) bits)
+    if (setIndexBits % 2 == 0){
+      // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
+      val half = setIndexBits / 2
+      var L = address(byteIndexBits + wordIndexBits, half bits)
+      var R = address(byteIndexBits + wordIndexBits + half, half bits)
+
+      // 4-Stage Feistel-Network
+      for (i <- 0 until feistelStages) {
+        var temp = L
+        L = R ^ key(i)
+        R = temp
+      }
+
+      U(L ## R)
+    }else {
+      // Default to Standard Set-Associative Assignment
+      address(byteIndexBits + wordIndexBits, setIndexBits bits)
+    }
   }
 
   private def getTagBits(address: UInt): UInt = {
