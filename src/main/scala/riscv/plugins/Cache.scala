@@ -10,7 +10,8 @@ class Cache(
     busFilter: ((Stage, MemBus, MemBus) => Unit) => Unit,
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
-    cacheable: (UInt => Bool) = (_ => True)
+    cacheable: (UInt => Bool) = (_ => True),
+    randomizedSetIndexing: Bool = True
 )(implicit config: Config)
     extends Plugin[Pipeline] {
   private val byteIndexBits = log2Up(config.xlen / 8)
@@ -33,7 +34,7 @@ class Cache(
   }
 
   private def getSetIndex(address: UInt): UInt = {
-    if (setIndexBits % 2 == 0) {
+    if (randomizedSetIndexing == True && (setIndexBits % 2) == 0) {
       // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
       val half = setIndexBits / 2
       var L = address(byteIndexBits + wordIndexBits, half bits)
