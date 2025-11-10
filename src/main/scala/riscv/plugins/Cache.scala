@@ -33,7 +33,7 @@ class Cache(
   }
 
   private def getSetIndex(address: UInt): UInt = {
-    if (setIndexBits % 2 == 0){
+    if (setIndexBits % 2 == 0) {
       // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
       val half = setIndexBits / 2
       var L = address(byteIndexBits + wordIndexBits, half bits)
@@ -47,7 +47,7 @@ class Cache(
       }
 
       U(L ## R)
-    }else {
+    } else {
       // Default to Standard Set-Associative Assignment
       address(byteIndexBits + wordIndexBits, setIndexBits bits)
     }
