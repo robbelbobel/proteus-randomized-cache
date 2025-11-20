@@ -37,11 +37,13 @@ class Cache(
   private def getSetIndex(address: UInt): UInt = {
     if (randomizedSetIndexing == True && (setIndexBits % 2) == 0) {
       // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
+      assert(sets >= 2 && setIndexBits % 2 == 0);
       val half = setIndexBits / 2
+
+      // 4-Stage Feistel-Network
       var L = address(byteIndexBits + wordIndexBits, half bits)
       var R = address(byteIndexBits + wordIndexBits + half, half bits)
 
-      // 4-Stage Feistel-Network
       for (i <- 0 until feistelStages) {
         var temp = L
         L = R ^ key(i)
@@ -50,7 +52,7 @@ class Cache(
 
       U(L ## R)
     } else {
-      // Default to Standard Set-Associative Assignment
+      // Default to Standard Set-Associative Indexing
       address(byteIndexBits + wordIndexBits, setIndexBits bits)
     }
   }
