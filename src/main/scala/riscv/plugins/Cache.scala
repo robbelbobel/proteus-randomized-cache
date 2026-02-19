@@ -13,6 +13,7 @@ class Cache(
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True
+    delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
   private val byteIndexBits = log2Up(config.xlen / 8)
@@ -134,9 +135,15 @@ class Cache(
       private val rspBuffer = Reg(MemBusRsp(internal.config))
       private val returningCache = Reg(Bool()).init(False)
 
+      // Delay cache response with a fixed delay
+      // Note that a minimal delay of 1 clock cycle is required to prevent
+      // combinatorial loops in case of multiple dbus filters.
+      private val internalRspBuffer = Stream(MemBusRsp(internal.config))
+      internal.rsp << internalRspBuffer.delay(delay)
+
       // initial state: not sending or acknowledging anything
-      internal.rsp.valid := False
-      internal.rsp.payload.assignDontCare()
+      internalRspBuffer.valid := False
+      internalRspBuffer.payload.assignDontCare()
       internal.cmd.ready := False
       external.cmd.valid := False
       external.cmd.payload.assignDontCare()
@@ -156,13 +163,13 @@ class Cache(
 
       private def forwardRspToInternal(): Unit = {
         sendingRsp := True
-        internal.rsp.valid := True
+        internalRspBuffer.valid := True
 
-        internal.rsp.rdata := external.rsp.rdata
+        internalRspBuffer.rdata := external.rsp.rdata
         // the index of 1's in internalIds indicate to which internal ids the response should be forwarded
         val internalId = OHToUInt(OHMasking.first(outstandingLoads(external.rsp.id).internalIds))
-        internal.rsp.id := internalId
-        when(internal.rsp.ready) {
+        internalRspBuffer.id := internalId
+        when(internalRspBuffer.ready) {
           // set the bit to 0 once it has been forwarded
           outstandingLoads(external.rsp.id).internalIds(internalId) := False
         }
@@ -218,7 +225,7 @@ class Cache(
           forwardRspToInternal()
           when(
             // when there is only one id left to forward, put result in cache and inform external bus we are done
-            internal.rsp.ready && CountOne(outstandingLoads(external.rsp.id).internalIds) === 1
+            internalRspBuffer.ready && CountOne(outstandingLoads(external.rsp.id).internalIds) === 1
           ) {
             insertRspInCache(address)
             alreadySendingRsp := False
@@ -236,10 +243,10 @@ class Cache(
           rspBuffer.id := internal.cmd.id
           rspBuffer.rdata := cacheLine.value
           when(!sendingRsp) {
-            internal.rsp.valid := True
-            internal.rsp.id := internal.cmd.id
-            internal.rsp.rdata := cacheLine.value
-            when(!internal.rsp.ready) {
+            internalRspBuffer.valid := True
+            internalRspBuffer.id := internal.cmd.id
+            internalRspBuffer.rdata := cacheLine.value
+            when(!internalRspBuffer.ready) {
               returningCache := True
             }
           } otherwise {
@@ -251,9 +258,9 @@ class Cache(
 
       when(returningCache && !sendingRsp) {
         // when not forwarding rsp but have a stored cache hit, return that
-        internal.rsp.valid := True
-        internal.rsp.payload := rspBuffer
-        when(internal.rsp.ready) {
+        internalRspBuffer.valid := True
+        internalRspBuffer.payload := rspBuffer
+        when(internalRspBuffer.ready) {
           returningCache := False
         }
       }

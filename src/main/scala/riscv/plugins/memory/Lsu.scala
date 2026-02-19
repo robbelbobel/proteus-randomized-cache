@@ -448,7 +448,7 @@ class Lsu(addressStages: Set[Stage], loadStages: Seq[Stage], storeStage: Stage)
 
             output(pipeline.data.RD_DATA) := result
             output(pipeline.data.RD_DATA_VALID) := True
-            formal.lsuOnLoad(loadStage, busAddress, mask, fullValue)
+            formal.lsuOnLoad(loadStage, address, baseMask.resize(config.xlen / 8 bits), result)
           }
         } otherwise {
           loadActive := False
@@ -532,7 +532,7 @@ class Lsu(addressStages: Set[Stage], loadStages: Seq[Stage], storeStage: Stage)
           val accepted = dbusCtrl.write(busAddress, cacheLine.resized, mask)
           arbitration.isReady := accepted
 
-          formal.lsuOnStore(storeStage, busAddress, mask, data)
+          formal.lsuOnStore(storeStage, address, baseMask.resize(config.xlen / 8 bits), wValue)
         }
       }
     }

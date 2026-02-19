@@ -20,7 +20,7 @@ before_script:
   - apt-get update -yqq
   - apt-get install sbt -yqq
   # Clone ecosystem for functional tests
-  - git clone --depth 1 --recurse-submodules --branch 64bit --single-branch https://github.com/proteus-core/ecosystem.git
+  - git clone --depth 1 --recurse-submodules --single-branch https://github.com/proteus-core/ecosystem.git
 
 scalafmt:
   script:

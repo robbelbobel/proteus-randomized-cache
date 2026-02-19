@@ -220,10 +220,10 @@ object createDynamicPipeline {
 
       val dynamicPipeline: DynamicPipeline = this
 
-      override val issuePipeline = new StaticPipeline {
-        val fetch = new Stage("IF").setName("fetch")
-        val decode = new Stage("ID").setName("decode")
+      val fetch = new Stage("IF").setName("fetch")
+      val decode = new Stage("ID").setName("decode")
 
+      override val issuePipeline = new StaticPipeline {
         override val stages = Seq(fetch, decode)
         override val config = dynamicPipeline.config
         override val data = dynamicPipeline.data
@@ -248,7 +248,7 @@ object createDynamicPipeline {
         new scheduling.static.Scheduler(canStallExternally = true),
         new scheduling.static.PcManager(0x80000000L),
         pipeline.backbone,
-        new memory.Fetcher(pipeline.issuePipeline.fetch)
+        new memory.Fetcher(pipeline.fetch)
       )
     )
 
@@ -256,14 +256,14 @@ object createDynamicPipeline {
 
     pipeline.addPlugins(
       Seq(
-        new Decoder(pipeline.issuePipeline.decode), // TODO: ugly alert!!
+        new Decoder(pipeline.decode), // TODO: ugly alert!!
         new scheduling.dynamic.Scheduler,
         new scheduling.dynamic.PcManager,
         new RegisterFileAccessor(
           // FIXME this works since there is no delay between ID and dispatch. It would probably be
           // safer to create an explicit dispatch stage in the dynamic pipeline and read the registers
           // there. It could still be zero-delay of course.
-          readStage = pipeline.issuePipeline.decode,
+          readStage = pipeline.decode,
           writeStage = pipeline.retirementStage
         ),
         new memory.Lsu(
@@ -272,7 +272,7 @@ object createDynamicPipeline {
           pipeline.retirementStage
         ),
         new BranchTargetPredictor(
-          pipeline.issuePipeline.fetch,
+          pipeline.fetch,
           pipeline.retirementStage,
           8,
           conf.xlen
