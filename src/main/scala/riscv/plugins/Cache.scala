@@ -12,7 +12,7 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    randomizedSetIndexing: Bool = True
+    randomizedSetIndexing: Bool = True,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
