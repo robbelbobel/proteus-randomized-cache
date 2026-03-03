@@ -13,6 +13,8 @@ class Cache(
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True,
+    replacementPolicy: String = "LRU",
+    invalidTags: Int = 0,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
@@ -189,12 +191,19 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
-          val way = oldestWay(setIndex)
-          cache(setIndex)(0)(way).valid := True
-          cache(setIndex)(0)(way).tag := tag
-          cache(setIndex)(0)(way).value := external.rsp.rdata
-          cache(setIndex)(0)(way).age := U(0).resized
-          increaseAgesUpTo(setIndex, ways - 1)
+          if(replacementPolicy == "LRU"){
+            // Least Recently Used Approach
+            val way = oldestWay(setIndex)
+            cache(setIndex)(0)(way).valid := True
+            cache(setIndex)(0)(way).tag := tag
+            cache(setIndex)(0)(way).value := external.rsp.rdata
+            cache(setIndex)(0)(way).age := U(0).resized
+            increaseAgesUpTo(setIndex, ways - 1)
+          }
+          if(replacementPolicy == "RAN") {
+            // Random Approach
+            val way = 
+          }
         }
         external.rsp.ready := True
       }
