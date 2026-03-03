@@ -33,7 +33,7 @@ class Cache(
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
-    val age: UInt = UInt(log2Up(ways) bits)
+    val age: UInt = UInt(log2Up(ways) bits) // Should only be needed in LRU replacement policies
     val valid: Bool = Bool()
   }
 
@@ -202,7 +202,11 @@ class Cache(
           }
           if(replacementPolicy == "RAN") {
             // Random Approach
-            val way = 
+            val way = oldestWay(setIndex) // USE RANDOM WAY HERE
+            cache(setIndex)(0)(way).valid := True
+            cache(setIndex)(0)(way).tag := tag
+            cache(setIndex)(0)(way).value := external.rsp.rdata
+            cache(setIndex)(0)(way).age := U(0).resized
           }
         }
         external.rsp.ready := True
