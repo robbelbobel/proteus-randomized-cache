@@ -191,6 +191,8 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
+          assert(replacementPolicy == "LRU" || replacementPolicy == "RAN")
+
           if(replacementPolicy == "LRU"){
             // Least Recently Used Approach
             val way = oldestWay(setIndex)
