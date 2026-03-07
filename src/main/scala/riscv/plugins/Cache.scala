@@ -22,6 +22,14 @@ class Cache(
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setIndexBits = log2Up(sets)
 
+  private val rng = slave(new RngIo)
+
+  override def setup(): Unit = {
+    val rngService = pipeline.service[RngService];
+    val rngBufferIndex = rngService.registerRngBuffer(new RngFifo());
+    rng <> rngService.getRngBuffer(rngBufferIndex)
+  }
+
   // Initialize Key (4 Stages like CAESER)
   private val feistelStages = 4
   private val key = Vec.fill(feistelStages)(Reg(UInt(setIndexBits / 2 bits)))

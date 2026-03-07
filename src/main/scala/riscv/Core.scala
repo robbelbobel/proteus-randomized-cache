@@ -81,7 +81,8 @@ object createStaticPipeline {
         new Interrupts(pipeline.writeback),
         new MulDiv(Set(pipeline.execute)),
         new Fence(Set(pipeline.execute)),
-        new Marker
+        new Marker,
+        new Rng()
       ) ++ extraPlugins
     )
 
