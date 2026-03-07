@@ -193,7 +193,7 @@ class Cache(
         ) {
           assert(replacementPolicy == "LRU" || replacementPolicy == "RAN")
 
-          if(replacementPolicy == "LRU"){
+          if (replacementPolicy == "LRU") {
             // Least Recently Used Approach
             val way = oldestWay(setIndex)
             cache(setIndex)(0)(way).valid := True
@@ -202,7 +202,7 @@ class Cache(
             cache(setIndex)(0)(way).age := U(0).resized
             increaseAgesUpTo(setIndex, ways - 1)
           }
-          if(replacementPolicy == "RAN") {
+          if (replacementPolicy == "RAN") {
             // Random Approach
             val way = oldestWay(setIndex) // USE RANDOM WAY HERE
             cache(setIndex)(0)(way).valid := True
