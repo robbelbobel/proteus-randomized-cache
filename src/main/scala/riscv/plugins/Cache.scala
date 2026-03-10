@@ -76,7 +76,7 @@ class Cache(
       val rngService = pipeline.service[RngService]
       val rng = new RngIo
       rng.rdata_request := False // TODO: This should be handled by isSlave!!
-      rng <> rngService.getRngBuffer(rngBufferIndex) 
+      rng <> rngService.getRngBuffer(rngBufferIndex)
 
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
@@ -208,8 +208,7 @@ class Cache(
             cache(setIndex)(0)(way).value := external.rsp.rdata
             cache(setIndex)(0)(way).age := U(0).resized
             increaseAgesUpTo(setIndex, ways - 1)
-          }
-          else if (replacementPolicy == "RAN") {
+          } else if (replacementPolicy == "RAN") {
             // Random Approach
             val (rngValid, rngValue) = rng.get()
 
@@ -495,7 +494,7 @@ class Cache(
     cacheArea.setName("cache_" + external.name)
   }
 
-  /** PHASES **/
+  /** PHASES * */
   override def setup(): Unit = {
     // RNG
     val rngService = pipeline.service[RngService]
