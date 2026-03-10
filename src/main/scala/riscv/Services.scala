@@ -79,7 +79,7 @@ trait DecoderService {
     def addDecoding(opcode: MaskedLiteral, itype: InstructionType, action: Action): Unit
     def addDecoding(opcode: MaskedLiteral, action: Action): Unit
 
-    /** Hardcode the register operands used by the given opcode. This means the operands will not be
+    /** Hardcode the register operandsngsed by the given opcode. This means the operands will not be
       * decoded from the opcode but the given values will be used instead.
       */
     def setFixedRegisters(

@@ -82,7 +82,7 @@ object createStaticPipeline {
         new MulDiv(Set(pipeline.execute)),
         new Fence(Set(pipeline.execute)),
         new Marker,
-        new Rng()
+        new Rng(allowUninitializedRng = true) // Allow the use of the hardcoded key
       ) ++ extraPlugins
     )
 
@@ -306,7 +306,8 @@ object createDynamicPipeline {
         new Timers,
         new Fence(pipeline.rsStages.toSet),
         new Marker,
-        new SpeculationTracking
+        new SpeculationTracking,
+        new Rng(allowUninitializedRng = true) // Allow the use of the hardcoded key
       ) ++ extraPlugins
     )
 

@@ -13,7 +13,7 @@ class Cache(
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True,
-    replacementPolicy: String = "LRU",
+    replacementPolicy: String = "RAN",
     invalidTags: Int = 0,
     delay: Int = 1
 )(implicit config: Config)
@@ -22,13 +22,7 @@ class Cache(
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setIndexBits = log2Up(sets)
 
-  private val rng = slave(new RngIo)
-
-  override def setup(): Unit = {
-    val rngService = pipeline.service[RngService];
-    val rngBufferIndex = rngService.registerRngBuffer(new RngFifo());
-    rng <> rngService.getRngBuffer(rngBufferIndex)
-  }
+  private var rngBufferIndex: Int = 0
 
   // Initialize Key (4 Stages like CAESER)
   private val feistelStages = 4
@@ -79,6 +73,11 @@ class Cache(
 
   private def connect(_s: Stage, internal: MemBus, external: MemBus): Unit = {
     val cacheArea = pipeline plug new Area {
+      val rngService = pipeline.service[RngService]
+      val rng = new RngIo
+      rng.rdata_request := False // TODO: This should be handled by isSlave!!
+      rng <> rngService.getRngBuffer(rngBufferIndex) 
+
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
@@ -210,9 +209,12 @@ class Cache(
             cache(setIndex)(0)(way).age := U(0).resized
             increaseAgesUpTo(setIndex, ways - 1)
           }
-          if (replacementPolicy == "RAN") {
+          else if (replacementPolicy == "RAN") {
             // Random Approach
-            val way = oldestWay(setIndex) // USE RANDOM WAY HERE
+            val (rngValid, rngValue) = rng.get()
+
+            assert(rngValid) // TODO: Handle invalid rng value
+            val way = (rngValue % ways).resized
             cache(setIndex)(0)(way).valid := True
             cache(setIndex)(0)(way).tag := tag
             cache(setIndex)(0)(way).value := external.rsp.rdata
@@ -491,6 +493,13 @@ class Cache(
       }
     }
     cacheArea.setName("cache_" + external.name)
+  }
+
+  /** PHASES **/
+  override def setup(): Unit = {
+    // RNG
+    val rngService = pipeline.service[RngService]
+    rngBufferIndex = rngService.registerRngBuffer(new RngFifo())
   }
 
   override def build(): Unit = {
