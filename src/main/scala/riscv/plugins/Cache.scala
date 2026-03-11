@@ -14,14 +14,21 @@ class Cache(
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True,
     replacementPolicy: String = "RAN",
+    skewApproach: String = "RS",
     invalidTags: Int = 0,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
+  // Verify Options
+  assert(replacementPolicy == "PLRU" || replacementPolicy == "RAN")
+  assert(skewApproach == "RS" || skewApproach == "LA")
+  assert(skews >= 1)
+
   private val byteIndexBits = log2Up(config.xlen / 8)
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setIndexBits = log2Up(sets)
 
+  // RNG
   private var rngBufferIndex: Int = 0
 
   // Initialize Key (4 Stages like CAESER)
@@ -37,6 +44,11 @@ class Cache(
     val value: UInt = UInt(config.memBusWidth bits)
     val age: UInt = UInt(log2Up(ways) bits) // Should only be needed in LRU replacement policies
     val valid: Bool = Bool()
+  }
+
+  case class WayResult() extends Bundle {
+    val skew: UInt = UInt(log2Up(skews) bits)
+    val way: UInt  = UInt(log2Up(ways) bits)
   }
 
   private def getSetIndex(address: UInt): UInt = {
@@ -106,11 +118,60 @@ class Cache(
         outstandingPrefetches := outstandingPrefetches - 1
       }
 
-      private def oldestWay(set: UInt): UInt = {
+      private def getSkewUsage(set: UInt, skew: UInt): UInt = {
+        assert(skew < skews)
+
+        // Count valid ways in provided skew
+        val result = UInt(ways bits)
+        result := 0
+        for (i <- 0 until ways) {
+          when (cache(set)(skew)(i).valid){
+            result := result + 1
+          }
+        }
+
+        result
+      }
+
+      private def getSkew(set: UInt): UInt = {
+        assert(skews >= 2) // This function should only be called when multiple skews are used
+
+        if (skewApproach == "RS") {
+          // Random Selection
+          val (rngValid, rngValue) = rng.get()
+          assert(rngValid, "Invalid rng value generated")
+
+          rngValue % skews
+        }
+        else {
+          // Load Aware
+          // Calculate usage of skews
+          val usage = Vec.fill(skews)(UInt(log2Up(ways) bits))
+          for (i <- 0 until skews) {
+            usage(i) := getSkewUsage(set, i)
+          }
+
+          // Find skew with lowest usage
+          val result = UInt(log2Up(skews) bits)
+          result := 0
+          for (i <- 0 until skews) {
+            when (usage(i) < usage(result)) {
+              result := i
+            }
+            when (usage(i) === usage(result)) {
+              // todo: Randomness Here
+            }
+          }
+
+          result
+        }
+      }
+
+      private def oldestWay(set: UInt, skew: UInt): UInt = {
         val result = UInt(log2Up(ways) bits)
         result := 0
         for (i <- 0 until ways) {
-          when(cache(set)(0)(i).age === ways - 1 || !cache(set)(0)(i).valid) {
+          when(cache(set)(skew)(i).age === ways - 1 || !cache(set)(skew)(i).valid) {
             result := i
           }
         }
@@ -118,17 +179,21 @@ class Cache(
       }
 
       private def increaseAgesUpTo(set: UInt, oldest: UInt): Unit = {
-        for (i <- 0 until ways) {
-          when(cache(set)(0)(i).age < oldest) {
-            cache(set)(0)(i).age := cache(set)(0)(i).age + 1
+        for (j <- 0 until skews) {
+          for (i <- 0 until ways) {
+            when(cache(set)(j)(i).age < oldest) {
+              cache(set)(j)(i).age := cache(set)(j)(i).age + 1
+            }
           }
         }
       }
 
       private def decreaseAgesUntil(set: UInt, youngest: UInt): Unit = {
-        for (i <- 0 until ways) {
-          when(cache(set)(0)(i).age > youngest) {
-            cache(set)(0)(i).age := cache(set)(0)(i).age - 1
+        for (j <- 0 until skews) {
+          for (i <- 0 until ways) {
+            when(cache(set)(j)(i).age > youngest) {
+              cache(set)(j)(i).age := cache(set)(j)(i).age - 1
+            }
           }
         }
       }
@@ -187,6 +252,7 @@ class Cache(
       private def insertRspInCache(address: UInt): Unit = {
         val setIndex = getSetIndex(address)
         val tag = getTagBits(address)
+        val skew = if(skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
 
         outstandingLoads(external.rsp.id).pending := False
         outstandingLoads(external.rsp.id).storeInvalidated := False
@@ -198,15 +264,13 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
-          assert(replacementPolicy == "LRU" || replacementPolicy == "RAN")
-
-          if (replacementPolicy == "LRU") {
+          if (replacementPolicy == "PLRU") {
             // Least Recently Used Approach
-            val way = oldestWay(setIndex)
-            cache(setIndex)(0)(way).valid := True
-            cache(setIndex)(0)(way).tag := tag
-            cache(setIndex)(0)(way).value := external.rsp.rdata
-            cache(setIndex)(0)(way).age := U(0).resized
+            val way = oldestWay(setIndex, skew)
+            cache(setIndex)(skew)(way).valid := True
+            cache(setIndex)(skew)(way).tag := tag
+            cache(setIndex)(skew)(way).value := external.rsp.rdata
+            cache(setIndex)(skew)(way).age := U(0).resized
             increaseAgesUpTo(setIndex, ways - 1)
           } else if (replacementPolicy == "RAN") {
             // Random Approach
@@ -214,10 +278,10 @@ class Cache(
 
             assert(rngValid) // TODO: Handle invalid rng value
             val way = (rngValue % ways).resized
-            cache(setIndex)(0)(way).valid := True
-            cache(setIndex)(0)(way).tag := tag
-            cache(setIndex)(0)(way).value := external.rsp.rdata
-            cache(setIndex)(0)(way).age := U(0).resized
+            cache(setIndex)(skew)(way).valid := True
+            cache(setIndex)(skew)(way).tag := tag
+            cache(setIndex)(skew)(way).value := external.rsp.rdata
+            cache(setIndex)(skew)(way).age := U(0).resized
           }
         }
         external.rsp.ready := True
@@ -335,16 +399,22 @@ class Cache(
         }
       }
 
-      private def wayForAddress(address: UInt): Flow[UInt] = {
-        val set = cache(getSetIndex(address))(0)
+      private def wayForAddress(address: UInt): Flow[WayResult] = {
+        val set = cache(getSetIndex(address))
         val tag = getTagBits(address)
-        val result = Flow(UInt(log2Up(ways) bits))
+        val result = Flow(WayResult())
         result.setIdle()
-        for (i <- 0 until ways) {
-          when(set(i).valid && set(i).tag === tag) {
-            result.push(i)
+        for (j <- 0 until skews) {
+          for (i <- 0 until ways) {
+            when(set(j)(i).valid && set(j)(i).tag === tag) {
+              val wayResult = WayResult()
+              wayResult.skew := j
+              wayResult.way := i
+              result.push(wayResult)
+            }
           }
         }
+
         result
       }
 
@@ -407,15 +477,15 @@ class Cache(
           pref.notifyLoadRequest(address)
         }
 
-        val targetWay = wayForAddress(address)
+        val targetWay = wayForAddress(address) // Flow[WayResult]
         val setIndex = getSetIndex(address)
-        val cacheSet = cache(setIndex)(0)
+        val cacheSet = cache(setIndex)
         val tagBits = getTagBits(address)
 
         when(targetWay.valid) {
-          cacheSet(targetWay.payload).age := U(0).resized
-          increaseAgesUpTo(setIndex, cacheSet(targetWay.payload).age)
-          returnFromCache(cacheSet(targetWay.payload))
+          cacheSet(targetWay.payload.skew)(targetWay.payload.way).age := U(0).resized
+          increaseAgesUpTo(setIndex, cacheSet(targetWay.payload.skew)(targetWay.payload.way).age)
+          returnFromCache(cacheSet(targetWay.payload.skew)(targetWay.payload.way))
         } otherwise {
           val alreadyPending = False
           for (i <- 0 until outstandingLoads.length) {
@@ -463,11 +533,13 @@ class Cache(
           when(internal.cmd.write) {
             storeInCycle := True
             // write command: invalidates line and forwards to external bus
-            for (i <- 0 until ways) {
-              when(cache(indexBits)(0)(i).tag === tagBits) {
-                cache(indexBits)(0)(i).valid := False
-                cache(indexBits)(0)(i).age := ways - 1
-                decreaseAgesUntil(indexBits, cache(indexBits)(0)(i).age)
+            for (j <- 0 until skews){
+              for (i <- 0 until ways) {
+                when(cache(indexBits)(j)(i).tag === tagBits) {
+                  cache(indexBits)(j)(i).valid := False
+                  cache(indexBits)(j)(i).age := ways - 1
+                  decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
+                }
               }
             }
 
