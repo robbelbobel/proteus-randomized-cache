@@ -48,7 +48,7 @@ class Cache(
 
   case class WayResult() extends Bundle {
     val skew: UInt = UInt(log2Up(skews) bits)
-    val way: UInt  = UInt(log2Up(ways) bits)
+    val way: UInt = UInt(log2Up(ways) bits)
   }
 
   private def getSetIndex(address: UInt): UInt = {
@@ -125,7 +125,7 @@ class Cache(
         val result = UInt(ways bits)
         result := 0
         for (i <- 0 until ways) {
-          when (cache(set)(skew)(i).valid){
+          when(cache(set)(skew)(i).valid) {
             result := result + 1
           }
         }
@@ -142,8 +142,7 @@ class Cache(
           assert(rngValid, "Invalid rng value generated")
 
           rngValue % skews
-        }
-        else {
+        } else {
           // Load Aware
           // Calculate usage of skews
           val usage = Vec.fill(skews)(UInt(log2Up(ways) bits))
@@ -155,10 +154,10 @@ class Cache(
           val result = UInt(log2Up(skews) bits)
           result := 0
           for (i <- 0 until skews) {
-            when (usage(i) < usage(result)) {
+            when(usage(i) < usage(result)) {
               result := i
             }
-            when (usage(i) === usage(result)) {
+            when(usage(i) === usage(result)) {
               // todo: Randomness Here
             }
           }
@@ -252,7 +251,7 @@ class Cache(
       private def insertRspInCache(address: UInt): Unit = {
         val setIndex = getSetIndex(address)
         val tag = getTagBits(address)
-        val skew = if(skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
+        val skew = if (skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
 
         outstandingLoads(external.rsp.id).pending := False
         outstandingLoads(external.rsp.id).storeInvalidated := False
@@ -533,7 +532,7 @@ class Cache(
           when(internal.cmd.write) {
             storeInCycle := True
             // write command: invalidates line and forwards to external bus
-            for (j <- 0 until skews){
+            for (j <- 0 until skews) {
               for (i <- 0 until ways) {
                 when(cache(indexBits)(j)(i).tag === tagBits) {
                   cache(indexBits)(j)(i).valid := False
