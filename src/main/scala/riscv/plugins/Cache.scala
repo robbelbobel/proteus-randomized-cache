@@ -4,6 +4,14 @@ import riscv._
 import spinal.core._
 import spinal.lib._
 
+object ReplacementPolicy extends SpinalEnum {
+  val PLRU, RAN = newElement()
+}
+
+object SkewApproach extends SpinalEnum {
+  val RS, LA = newElement()
+}
+
 class Cache(
     sets: Int,
     ways: Int,
@@ -13,15 +21,13 @@ class Cache(
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True,
-    replacementPolicy: String = "RAN",
-    skewApproach: String = "RS",
+    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RAN,
+    skewApproach: SkewApproach.E = SkewApproach.RS,
     invalidTags: Int = 0,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
   // Verify Options
-  assert(replacementPolicy == "PLRU" || replacementPolicy == "RAN")
-  assert(skewApproach == "RS" || skewApproach == "LA")
   assert(skews >= 1)
 
   private val byteIndexBits = log2Up(config.xlen / 8)
@@ -136,7 +142,7 @@ class Cache(
       private def getSkew(set: UInt): UInt = {
         assert(skews >= 2) // This function should only be called when multiple skews are used
 
-        if (skewApproach == "RS") {
+        if (skewApproach == SkewApproach.RS) {
           // Random Selection
           val (rngValid, rngValue) = rng.get()
           assert(rngValid, "Invalid rng value generated")
@@ -263,7 +269,7 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
-          if (replacementPolicy == "PLRU") {
+          if (replacementPolicy == ReplacementPolicy.PLRU) {
             // Least Recently Used Approach
             val way = oldestWay(setIndex, skew)
             cache(setIndex)(skew)(way).valid := True
@@ -271,7 +277,7 @@ class Cache(
             cache(setIndex)(skew)(way).value := external.rsp.rdata
             cache(setIndex)(skew)(way).age := U(0).resized
             increaseAgesUpTo(setIndex, ways - 1)
-          } else if (replacementPolicy == "RAN") {
+          } else {
             // Random Approach
             val (rngValid, rngValue) = rng.get()
 
