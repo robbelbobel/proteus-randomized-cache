@@ -22,7 +22,7 @@ class Cache(
     cacheable: (UInt => Bool) = (_ => True),
     randomizedSetIndexing: Bool = True,
     replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RAN,
-    skewApproach: SkewApproach.E = SkewApproach.RS,
+    skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0,
     delay: Int = 1
 )(implicit config: Config)
