@@ -5,13 +5,16 @@ import spinal.core._
 import spinal.lib._
 
 object ReplacementPolicy extends SpinalEnum {
-  val PLRU, RAN = newElement()
+  val PLRU, RAN = newElement() // Pseudo-LRU, Random
 }
 
 object SkewApproach extends SpinalEnum {
-  val RS, LA = newElement()
+  val RS, LA = newElement() // Random Selection, Load Aware
 }
 
+object EvictionPolicy extends SpinalEnum {
+  val LE, GE = newElement() // Local Eviction, Global Eviction
+}
 class Cache(
     sets: Int,
     ways: Int,
@@ -23,12 +26,14 @@ class Cache(
     randomizedSetIndexing: Bool = True,
     replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RAN,
     skewApproach: SkewApproach.E = SkewApproach.LA,
-    invalidTags: Int = 0,
+    validTagPercentage: Float = 1.0f, // Invalid Tags!
+    evictionPolicy: EvictionPolicy.E = EvictionPolicy.LE,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
-  // Verify Options
-  assert(skews >= 1)
+  // Verify Security Options
+  assert(skews >= 1, "Cache must exist out of 1 or more skews")
+  assert(validTagPercentage > 0.0f && validTagPercentage <= 1.0f, "Valid tag percentage must be larger than 0 and maximum 1")
 
   private val byteIndexBits = log2Up(config.xlen / 8)
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
@@ -105,6 +110,7 @@ class Cache(
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
       private val forwardedLoads = RegInit(UInt(config.xlen bits).getZero)
+      private val validTags = UInt(config.xlen bits).getZero // Tracks the amount of valid tags within this cache
 
       private val externalId = RegInit(UInt(external.config.idWidth bits).getZero)
 
@@ -175,11 +181,16 @@ class Cache(
       private def oldestWay(set: UInt, skew: UInt): UInt = {
         val result = UInt(log2Up(ways) bits)
         result := 0
-        for (i <- 0 until ways) {
-          when(cache(set)(skew)(i).age === ways - 1 || !cache(set)(skew)(i).valid) {
-            result := i
+
+        if(evictionPolicy == EvictionPolicy.LE){
+          // Local Eviction
+          for (i <- 0 until ways) {
+            when(cache(set)(skew)(i).age === ways - 1 || !cache(set)(skew)(i).valid) {
+              result := i
+            }
           }
         }
+
         result
       }
 
@@ -269,24 +280,40 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
-          if (replacementPolicy == ReplacementPolicy.PLRU) {
-            // Least Recently Used Approach
-            val way = oldestWay(setIndex, skew)
-            cache(setIndex)(skew)(way).valid := True
-            cache(setIndex)(skew)(way).tag := tag
-            cache(setIndex)(skew)(way).value := external.rsp.rdata
-            cache(setIndex)(skew)(way).age := U(0).resized
-            increaseAgesUpTo(setIndex, ways - 1)
-          } else {
-            // Random Approach
-            val (rngValid, rngValue) = rng.get()
+          val stored = False
+          for (i <- 0 until ways) {
+            when(cache(setIndex)(skew)(i).valid == False) {
+              // Free Entry Found -> Insert Here
+              cache(setIndex)(skew)(i).valid := True
+              cache(setIndex)(skew)(i).tag := tag
+              cache(setIndex)(skew)(i).value := external.rsp.rdata
+              cache(setIndex)(skew)(i).age := U(0).resized
+              stored = True
+            }
+          }
 
-            assert(rngValid) // TODO: Handle invalid rng value
-            val way = (rngValue % ways).resized
-            cache(setIndex)(skew)(way).valid := True
-            cache(setIndex)(skew)(way).tag := tag
-            cache(setIndex)(skew)(way).value := external.rsp.rdata
-            cache(setIndex)(skew)(way).age := U(0).resized
+          when(stored == False) {
+            // No Free Entry Found -> Use Replacement Policy (Eviction Policy!!)
+            // Do not use skew here, only used to find available entries. Use the eviction policy here: Per set (LE), Globally (GE)
+            if (replacementPolicy == ReplacementPolicy.PLRU) {
+              // Least Recently Used Approach
+              val way = oldestWay(setIndex, skew) // TODO: Take into account extra invalid tags
+              cache(setIndex)(skew)(way).valid := True
+              cache(setIndex)(skew)(way).tag := tag
+              cache(setIndex)(skew)(way).value := external.rsp.rdata
+              cache(setIndex)(skew)(way).age := U(0).resized
+              increaseAgesUpTo(setIndex, ways - 1)
+            } else {
+              // Random Approach
+              val (rngValid, rngValue) = rng.get()
+
+              assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
+              val way = (rngValue % ways).resized
+              cache(setIndex)(skew)(way).valid := True
+              cache(setIndex)(skew)(way).tag := tag
+              cache(setIndex)(skew)(way).value := external.rsp.rdata
+              cache(setIndex)(skew)(way).age := U(0).resized
+            }
           }
         }
         external.rsp.ready := True
@@ -542,6 +569,7 @@ class Cache(
               for (i <- 0 until ways) {
                 when(cache(indexBits)(j)(i).tag === tagBits) {
                   cache(indexBits)(j)(i).valid := False
+                  validTags = validTags - 1 // Decrease Valid Tag Counter
                   cache(indexBits)(j)(i).age := ways - 1
                   decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
                 }
