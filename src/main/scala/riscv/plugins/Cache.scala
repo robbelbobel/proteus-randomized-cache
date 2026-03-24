@@ -118,7 +118,9 @@ class Cache(
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
       private val forwardedLoads = RegInit(UInt(config.xlen bits).getZero)
       private val validTags =
-        RegInit(UInt(config.xlen bits).getZero) // Tracks the amount of valid tags currently in this cache
+        RegInit(
+          UInt(config.xlen bits).getZero
+        ) // Tracks the amount of valid tags currently in this cache
 
       private val externalId = RegInit(UInt(external.config.idWidth bits).getZero)
 
@@ -173,7 +175,7 @@ class Cache(
 
         acc
       }
-    
+
       private def getSkew(set: UInt): UInt = {
         assert(skews >= 2) // This function should only be called when multiple skews are used
 
@@ -247,7 +249,7 @@ class Cache(
         // Evicts a Way Globally
         val result = WayResult()
 
-        if(replacementPolicy == ReplacementPolicy.PLRU) {
+        if (replacementPolicy == ReplacementPolicy.PLRU) {
           result.way := U(0).resized
           // TODO: Least Recently Used Approach
         } else {
@@ -257,7 +259,9 @@ class Cache(
 
           result.way := rngValue(log2Up(ways) - 1 downto 0).resized
           result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
-          result.set := rngValue(log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)).resized
+          result.set := rngValue(
+            log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
+          ).resized
         }
 
         result
