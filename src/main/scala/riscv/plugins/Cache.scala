@@ -27,7 +27,7 @@ class Cache(
     randomizedSetIndexing: Bool = True,
     replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RAN,
     skewApproach: SkewApproach.E = SkewApproach.LA,
-    invalidTags: UInt = 0, // Invalid Tags
+    invalidTags: Int = 0, // Invalid Tags
     evictionPolicy: EvictionPolicy.E = EvictionPolicy.LE,
     delay: Int = 1
 )(implicit config: Config)
@@ -62,6 +62,7 @@ class Cache(
   }
 
   case class WayResult() extends Bundle {
+    val set: UInt = UInt(log2Up(sets) bits)
     val skew: UInt = UInt(log2Up(skews) bits)
     val way: UInt = UInt(log2Up(ways) bits)
   }
@@ -105,6 +106,8 @@ class Cache(
       rng.rdata_request := False // TODO: This should be handled by isSlave!!
       rng <> rngService.getRngBuffer(rngBufferIndex)
 
+      private val totalWays: Int = ways * skews * sets
+
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
@@ -137,6 +140,7 @@ class Cache(
 
       private def getSkewUsage(set: UInt, skew: UInt): UInt = {
         assert(skew < skews)
+        assert(set < sets)
 
         // Count valid ways in provided skew
         val result = UInt(ways bits)
@@ -150,6 +154,26 @@ class Cache(
         result
       }
 
+      private def getCacheUsage(): UInt = {
+        val max = sets * skews * ways
+        val width = log2Up(max + 1)
+
+        val acc = Reg(UInt(width bits)).init(0)
+
+        acc := 0
+        for (i <- 0 until sets) {
+          for (j <- 0 until skews) {
+            for (k <- 0 until ways) {
+              when(cache(i)(j)(k).valid) {
+                acc := acc + 1
+              }
+            }
+          }
+        }
+
+        acc
+      }
+    
       private def getSkew(set: UInt): UInt = {
         assert(skews >= 2) // This function should only be called when multiple skews are used
 
@@ -219,7 +243,28 @@ class Cache(
         }
       }
 
-      private def evictWay(setIndex: UInt, skew: UInt): UInt = {
+      private def evictWayGlobal(): WayResult = {
+        // Evicts a Way Globally
+        val result = WayResult()
+
+        if(replacementPolicy == ReplacementPolicy.PLRU) {
+          result.way := U(0).resized
+          // TODO: Least Recently Used Approach
+        } else {
+          // Random Approach
+          val (rngValid, rngValue) = rng.get()
+          assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
+
+          result.way := rngValue(log2Up(ways) - 1 downto 0).resized
+          result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
+          result.set := rngValue(log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)).resized
+        }
+
+        result
+      }
+
+      private def evictWayLocal(setIndex: UInt, skew: UInt): UInt = {
+        // Evicts a Way for a Given Set and Skew
         if (replacementPolicy == ReplacementPolicy.PLRU) {
           // Least Recently Used Approach
           val way = oldestWay(setIndex, skew)
@@ -227,12 +272,11 @@ class Cache(
           increaseAgesUpTo(setIndex, ways - 1)
 
           return way
-
         } else {
           // Random Approach
           val (rngValid, rngValue) = rng.get()
-
           assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
+
           val way = (rngValue % ways).resized
           cache(setIndex)(skew)(way).valid := False
 
@@ -307,6 +351,7 @@ class Cache(
               getSignificantBits(address) === getSignificantBits(internal.cmd.address))
         ) {
           var stored = False
+          var evict = False
           for (i <- 0 until ways) {
             when(cache(setIndex)(skew)(i).valid === False) {
               // Free Entry Found -> Insert Here
@@ -325,26 +370,24 @@ class Cache(
 
           when(stored === False) {
             // No Free Ways -> Evict Way and use evicted entry
-            val way = evictWay(setIndex, skew)
+            val way = evictWayLocal(setIndex, skew)
 
             cache(setIndex)(skew)(way).valid := True
             cache(setIndex)(skew)(way).tag := tag
             cache(setIndex)(skew)(way).value := external.rsp.rdata
             cache(setIndex)(skew)(way).age := U(0).resized
           }
-          /*
-          when(validTags > (sets * skews * ways - invalidTags)) {
-            // Valid Tag count has been exceeded -> Evict until valid tag counter no longer succeeds max valid tags
+
+          when(getCacheUsage() + invalidTags > totalWays) {
+            // Valid Tag count has been exceeded
             if (evictionPolicy == EvictionPolicy.LE) {
               // Local Eviction
-              // TODO: Currently evictWay's local eviction needs a skew
-              // EvictWay()
+              evictWayLocal(setIndex, skew)
             } else {
               // Global Eviction
-              // TODO: Currently evictWay only uses local eviction -> Adjust to also allow global eviction
+              evictWayGlobal()
             }
           }
-           */
         }
         external.rsp.ready := True
       }
@@ -470,6 +513,7 @@ class Cache(
           for (i <- 0 until ways) {
             when(set(j)(i).valid && set(j)(i).tag === tag) {
               val wayResult = WayResult()
+              wayResult.set := getSetIndex(address)
               wayResult.skew := j
               wayResult.way := i
               result.push(wayResult)
