@@ -184,7 +184,7 @@ class Cache(
           val (rngValid, rngValue) = rng.get()
           assert(rngValid, "Invalid rng value generated")
 
-          rngValue % skews
+          (rngValue % skews).resize(log2Up(skews) bits)
         } else {
           // Load Aware
           // Calculate usage of skews
@@ -382,14 +382,16 @@ class Cache(
             cache(setIndex)(skew)(way).age := U(0).resized
           }
 
-          when(getCacheUsage() + invalidTags > totalWays) {
-            // Valid Tag count has been exceeded
-            if (evictionPolicy == EvictionPolicy.LE) {
-              // Local Eviction
-              evictWayLocal(setIndex, skew)
-            } else {
-              // Global Eviction
-              evictWayGlobal()
+          if (invalidTags != 0) {
+            when(getCacheUsage() + invalidTags > totalWays) {
+              // Valid Tag count has been exceeded
+              if (evictionPolicy == EvictionPolicy.LE) {
+                // Local Eviction
+                evictWayLocal(setIndex, skew)
+              } else {
+                // Global Eviction
+                evictWayGlobal()
+              }
             }
           }
         }
