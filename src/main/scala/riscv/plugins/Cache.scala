@@ -141,11 +141,8 @@ class Cache(
       }
 
       private def getSkewUsage(set: UInt, skew: UInt): UInt = {
-        assert(skew < skews)
-        assert(set < sets)
-
         // Count valid ways in provided skew
-        val result = UInt(ways bits)
+        val result = Reg(UInt(log2Up(ways) bits))
         result := 0
         for (i <- 0 until ways) {
           when(cache(set)(skew)(i).valid) {
@@ -190,11 +187,11 @@ class Cache(
           // Calculate usage of skews
           val usage = Vec.fill(skews)(UInt(log2Up(ways) bits))
           for (i <- 0 until skews) {
-            usage(i) := getSkewUsage(set, i)
+            usage(i) := getSkewUsage(set, U(i, log2Up(skews) bits))
           }
 
           // Find skew with lowest usage
-          val result = UInt(log2Up(skews) bits)
+          val result = Reg(UInt(log2Up(skews) bits))
           result := 0
           for (i <- 0 until skews) {
             when(usage(i) < usage(result)) {

@@ -61,7 +61,7 @@ object createStaticPipeline {
         new Cache(
           sets = 2,
           ways = 2,
-          skews = 1,
+          skews = 2,
           backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
@@ -69,7 +69,7 @@ object createStaticPipeline {
         new Cache(
           sets = 8,
           ways = 2,
-          skews = 1,
+          skews = 2,
           backbone.filterDBus,
           cacheable = (_ >= 0x80000000L)
         ),
@@ -282,7 +282,7 @@ object createDynamicPipeline {
         new Cache(
           sets = 2,
           ways = 2,
-          skews = 1,
+          skews = 2,
           pipeline.backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
@@ -290,7 +290,7 @@ object createDynamicPipeline {
         new Cache(
           sets = 8,
           ways = 2,
-          skews = 1,
+          skews = 2,
           busFilter = pipeline.backbone.filterDBus,
           cacheable = (_ >= 0x80000000L)
         ),
