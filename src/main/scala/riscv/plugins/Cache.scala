@@ -25,11 +25,12 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    randomizedSetIndexing: Bool = True, // TODO: Enforce this better: Disable all features related to randomized caching
+    randomizedSetIndexing: Bool =
+      True, // TODO: Enforce this better: Disable all features related to randomized caching
     replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RPLRU,
     skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0, // Invalid Tags
-    evictionPolicy: EvictionPolicy.E = EvictionPolicy.LE,
+    evictionPolicy: EvictionPolicy.E = EvictionPolicy.GE,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
@@ -58,7 +59,7 @@ class Cache(
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
-    val age: UInt = UInt(log2Up(ways) bits) // Should only be needed in LRU replacement policies
+    val age: UInt = UInt(log2Up(sets * skews * ways) bits)
     val valid: Bool = Bool()
   }
 
@@ -223,7 +224,7 @@ class Cache(
         result
       }
 
-      private def increaseAgesUpTo(set: UInt, oldest: UInt): Unit = {
+      private def increaseAgesUpToLocal(set: UInt, oldest: UInt): Unit = {
         for (j <- 0 until skews) {
           for (i <- 0 until ways) {
             when(cache(set)(j)(i).age < oldest) {
@@ -233,7 +234,19 @@ class Cache(
         }
       }
 
-      private def decreaseAgesUntil(set: UInt, youngest: UInt): Unit = {
+      private def increaseAgesUpToGlobal(oldest: UInt): Unit = {
+        for (k <- 0 until sets) {
+          for (j <- 0 until skews) {
+            for (i <- 0 until ways) {
+              when(cache(k)(j)(i).age < oldest) {
+                cache(k)(j)(i).age := cache(k)(j)(i).age + 1
+              }
+            }
+          }
+        }
+      }
+
+      private def decreaseAgesUntilLocal(set: UInt, youngest: UInt): Unit = {
         for (j <- 0 until skews) {
           for (i <- 0 until ways) {
             when(cache(set)(j)(i).age > youngest) {
@@ -243,15 +256,34 @@ class Cache(
         }
       }
 
+      private def decreaseAgesUntilGlobal(youngest: UInt): Unit = {
+        for (k <- 0 until sets) {
+          for (j <- 0 until skews) {
+            for (i <- 0 until ways) {
+              when(cache(k)(j)(i).age > youngest) {
+                cache(k)(j)(i).age := cache(k)(j)(i).age - 1
+              }
+            }
+          }
+        }
+      }
+
       private def evictWayGlobal(): WayResult = {
         // Evicts a Way Globally
-        val result = WayResult()
 
         if (replacementPolicy == ReplacementPolicy.RPLRU) {
+          val result = WayResult()
           result.way := U(0).resized
+          result.skew := U(0).resized
+          result.set := U(0).resized
+
           // TODO: Least Recently Used Approach
+
+          result
         } else {
           // Random Approach
+          val result = WayResult()
+
           val (rngValid, rngValue) = rng.get()
           assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
 
@@ -260,9 +292,9 @@ class Cache(
           result.set := rngValue(
             log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
           ).resized
-        }
 
-        result
+          result
+        }
       }
 
       private def evictWayLocal(setIndex: UInt): WayResult = {
@@ -271,7 +303,7 @@ class Cache(
           // Least Recently Used Approach
           val wayResult = oldestWay(setIndex)
           cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
-          increaseAgesUpTo(setIndex, ways - 1)
+          increaseAgesUpToLocal(setIndex, ways * skews - 1)
 
           return wayResult
         } else {
@@ -369,19 +401,41 @@ class Cache(
 
               validTags := validTags + 1 // May Trigger an Eviction
               if (replacementPolicy == ReplacementPolicy.RPLRU) {
-                increaseAgesUpTo(setIndex, ways - 1) // Increase Ages when PLRU is used
+                if (evictionPolicy == EvictionPolicy.LE) {
+                  increaseAgesUpToLocal(
+                    setIndex,
+                    ways * skews - 1
+                  ) // Increase Ages when PLRU is used
+                } else {
+                  // Global Eviction
+                  increaseAgesUpToGlobal(sets * skews * ways - 1)
+                }
               }
             }
           }
 
           when(stored === False) {
             // No Free Ways -> Evict Way and use evicted entry
-            val wayResult = evictWayLocal(setIndex)
+            if (evictionPolicy == EvictionPolicy.LE) {
+              val wayResult = evictWayLocal(setIndex)
+              increaseAgesUpToLocal(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
 
-            cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
-            cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
-            cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
-            cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
+              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
+              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
+              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+
+            } else {
+              // Global Eviction
+              val wayResult = evictWayGlobal()
+              increaseAgesUpToGlobal(cache(setIndex)(wayResult.skew)(wayResult.way).age)
+
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
+              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
+              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
+              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+            }
+
           }
 
           if (invalidTags != 0) {
@@ -598,7 +652,16 @@ class Cache(
 
         when(targetWay.valid) {
           cacheSet(targetWay.payload.skew)(targetWay.payload.way).age := U(0).resized
-          increaseAgesUpTo(setIndex, cacheSet(targetWay.payload.skew)(targetWay.payload.way).age)
+          if (evictionPolicy == EvictionPolicy.LE) {
+            increaseAgesUpToLocal(
+              setIndex,
+              cacheSet(targetWay.payload.skew)(targetWay.payload.way).age
+            )
+          } else {
+            // Global Eviction
+            increaseAgesUpToGlobal(cacheSet(targetWay.payload.skew)(targetWay.payload.way).age)
+          }
+
           returnFromCache(cacheSet(targetWay.payload.skew)(targetWay.payload.way))
         } otherwise {
           val alreadyPending = False
@@ -652,8 +715,12 @@ class Cache(
                 when(cache(indexBits)(j)(i).tag === tagBits) {
                   cache(indexBits)(j)(i).valid := False
                   validTags := validTags - 1 // Decrease Valid Tag Counter
-                  cache(indexBits)(j)(i).age := ways - 1
-                  decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
+                  cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
+                  if (evictionPolicy == EvictionPolicy.LE) {
+                    decreaseAgesUntilLocal(indexBits, cache(indexBits)(j)(i).age)
+                  } else {
+                    decreaseAgesUntilGlobal(cache(indexBits)(j)(i).age)
+                  }
                 }
               }
             }

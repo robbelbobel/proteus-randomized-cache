@@ -64,14 +64,14 @@ object createStaticPipeline {
           skews = 32,
           backbone.filterIBus,
           Some(prefetcher),
-          maxPrefetches = 2,
+          maxPrefetches = 2
         ),
         new Cache(
           sets = 8,
           ways = 2,
           skews = 32,
           backbone.filterDBus,
-          cacheable = (_ >= 0x80000000L),
+          cacheable = (_ >= 0x80000000L)
         ),
         new CsrFile(pipeline.writeback, pipeline.writeback), // TODO: ugly
         new Timers,
@@ -285,14 +285,14 @@ object createDynamicPipeline {
           skews = 32,
           pipeline.backbone.filterIBus,
           Some(prefetcher),
-          maxPrefetches = 2,
+          maxPrefetches = 2
         ),
         new Cache(
           sets = 8,
           ways = 2,
           skews = 32,
           busFilter = pipeline.backbone.filterDBus,
-          cacheable = (_ >= 0x80000000L),
+          cacheable = (_ >= 0x80000000L)
         ),
         new IntAlu(pipeline.intAlus.toSet),
         new Shifter(pipeline.intAlus.toSet),
