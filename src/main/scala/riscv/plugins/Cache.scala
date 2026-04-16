@@ -3,9 +3,10 @@ package riscv.plugins
 import riscv._
 import spinal.core._
 import spinal.lib._
+import riscv.BaseIsa.RV32E.xlen
 
 object ReplacementPolicy extends SpinalEnum {
-  val PLRU, RAN = newElement() // Pseudo-LRU, Random
+  val RPLRU, RAN = newElement() // Pseudo-LRU, Random
 }
 
 object SkewApproach extends SpinalEnum {
@@ -24,8 +25,8 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    randomizedSetIndexing: Bool = True,
-    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RAN,
+    randomizedSetIndexing: Bool = True, // TODO: Enforce this better: Disable all features related to randomized caching
+    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.RPLRU,
     skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0, // Invalid Tags
     evictionPolicy: EvictionPolicy.E = EvictionPolicy.LE,
@@ -206,15 +207,15 @@ class Cache(
         }
       }
 
-      private def oldestWay(set: UInt, skew: UInt): UInt = {
-        val result = UInt(log2Up(ways) bits)
-        result := 0
+      private def oldestWay(set: UInt): WayResult = {
+        val result = Reg(WayResult())
+        result.set := set
 
-        if (evictionPolicy == EvictionPolicy.LE) {
-          // Local Eviction
-          for (i <- 0 until ways) {
-            when(cache(set)(skew)(i).age === ways - 1 || !cache(set)(skew)(i).valid) {
-              result := i
+        for (i <- 0 until skews) {
+          for (j <- 0 until ways) {
+            when(cache(set)(i)(j).age === ways - 1 || !cache(set)(i)(j).valid) {
+              result.skew := i
+              result.way := j
             }
           }
         }
@@ -246,7 +247,7 @@ class Cache(
         // Evicts a Way Globally
         val result = WayResult()
 
-        if (replacementPolicy == ReplacementPolicy.PLRU) {
+        if (replacementPolicy == ReplacementPolicy.RPLRU) {
           result.way := U(0).resized
           // TODO: Least Recently Used Approach
         } else {
@@ -264,24 +265,28 @@ class Cache(
         result
       }
 
-      private def evictWayLocal(setIndex: UInt, skew: UInt): UInt = {
+      private def evictWayLocal(setIndex: UInt): WayResult = {
         // Evicts a Way for a Given Set and Skew
-        if (replacementPolicy == ReplacementPolicy.PLRU) {
+        if (replacementPolicy == ReplacementPolicy.RPLRU) {
           // Least Recently Used Approach
-          val way = oldestWay(setIndex, skew)
-          cache(setIndex)(skew)(way).valid := False
+          val wayResult = oldestWay(setIndex)
+          cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
           increaseAgesUpTo(setIndex, ways - 1)
 
-          return way
+          return wayResult
         } else {
           // Random Approach
           val (rngValid, rngValue) = rng.get()
           assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
 
-          val way = (rngValue % ways).resized
-          cache(setIndex)(skew)(way).valid := False
+          val wayResult = WayResult()
 
-          return way
+          wayResult.set := setIndex
+          wayResult.way := rngValue(log2Up(ways) downto 0).resized
+          wayResult.skew := rngValue(rngValue.high downto rngValue.high - log2Up(skews)).resized
+          cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
+
+          return wayResult
         }
       }
 
@@ -363,7 +368,7 @@ class Cache(
               stored = True
 
               validTags := validTags + 1 // May Trigger an Eviction
-              if (replacementPolicy == ReplacementPolicy.PLRU) {
+              if (replacementPolicy == ReplacementPolicy.RPLRU) {
                 increaseAgesUpTo(setIndex, ways - 1) // Increase Ages when PLRU is used
               }
             }
@@ -371,12 +376,12 @@ class Cache(
 
           when(stored === False) {
             // No Free Ways -> Evict Way and use evicted entry
-            val way = evictWayLocal(setIndex, skew)
+            val wayResult = evictWayLocal(setIndex)
 
-            cache(setIndex)(skew)(way).valid := True
-            cache(setIndex)(skew)(way).tag := tag
-            cache(setIndex)(skew)(way).value := external.rsp.rdata
-            cache(setIndex)(skew)(way).age := U(0).resized
+            cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
+            cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
+            cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
+            cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
           }
 
           if (invalidTags != 0) {
@@ -384,7 +389,7 @@ class Cache(
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
-                evictWayLocal(setIndex, skew)
+                evictWayLocal(setIndex)
               } else {
                 // Global Eviction
                 evictWayGlobal()
