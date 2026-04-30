@@ -59,15 +59,15 @@ object createStaticPipeline {
         new BranchTargetPredictor(pipeline.fetch, pipeline.execute, 8, conf.xlen),
         prefetcher,
         new Cache(
-          sets = 2,
+          sets = 4,
           ways = 2,
-          skews = 32,
+          
           backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
         ),
         new Cache(
-          sets = 8,
+          sets = 4,
           ways = 2,
           skews = 32,
           backbone.filterDBus,
@@ -280,7 +280,7 @@ object createDynamicPipeline {
         ),
         prefetcher,
         new Cache(
-          sets = 2,
+          sets = 4,
           ways = 2,
           skews = 32,
           pipeline.backbone.filterIBus,
@@ -288,7 +288,7 @@ object createDynamicPipeline {
           maxPrefetches = 2
         ),
         new Cache(
-          sets = 8,
+          sets = 4,
           ways = 2,
           skews = 32,
           busFilter = pipeline.backbone.filterDBus,
