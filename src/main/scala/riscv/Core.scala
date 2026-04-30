@@ -61,7 +61,7 @@ object createStaticPipeline {
         new Cache(
           sets = 4,
           ways = 2,
-          
+          skews = 32,
           backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
