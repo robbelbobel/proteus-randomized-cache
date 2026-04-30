@@ -248,31 +248,19 @@ class Cache(
       }
 
       private def evictWayGlobal(): WayResult = {
-        // Evicts a Way Globally
+        // Evicts a Way Globally -> Choose Randomly
+        val result = WayResult()
 
-        if (replacementPolicy == ReplacementPolicy.RPLRU) {
-          val result = WayResult()
-          result.way := U(0).resized
-          result.skew := U(0).resized
-          result.set := U(0).resized
+        val (rngValid, rngValue) = rng.get()
+        assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
 
-          // TODO: IMPLEMENT THIS
-          result
-        } else {
-          // Random Approach
-          val result = WayResult()
+        result.way := rngValue(log2Up(ways) - 1 downto 0).resized
+        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
+        result.set := rngValue(
+          log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
+        ).resized
 
-          val (rngValid, rngValue) = rng.get()
-          assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
-
-          result.way := rngValue(log2Up(ways) - 1 downto 0).resized
-          result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
-          result.set := rngValue(
-            log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
-          ).resized
-
-          result
-        }
+        result
       }
 
       private def evictWayLocal(setIndex: UInt): WayResult = {
