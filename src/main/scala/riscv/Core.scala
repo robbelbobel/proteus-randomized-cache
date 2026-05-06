@@ -71,9 +71,9 @@ object createStaticPipeline {
           ways = 4,
           skews = 1,
           backbone.filterDBus,
-          randomizedSetIndexing = True,
+          randomizedSetIndexing = False,
           replacementPolicy = ReplacementPolicy.RPLRU,
-          skewApproach = SkewApproach.RS, 
+          skewApproach = SkewApproach.RS,
           invalidTags = 0,
           evictionPolicy = EvictionPolicy.LE,
           cacheable = (_ >= 0x80000000L)

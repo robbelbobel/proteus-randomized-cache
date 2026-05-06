@@ -195,13 +195,13 @@ class Cache(
         } else {
           // Load Aware
           // Calculate usage of skews
-          val usage = (0 until skews).map { i => 
+          val usage = (0 until skews).map { i =>
             val s = new SkewUsage()
             s.skew := U(i, log2Up(skews) bits)
             s.usage := getSkewUsage(set, U(i, log2Up(skews) bits))
             s
           }
-            
+
           // Find skew with lowest usage
           val best = usage.reduceBalancedTree((a, b) => Mux(a.usage < b.usage, a, b))
 
@@ -385,6 +385,7 @@ class Cache(
           }
 
           if (invalidTags != 0) {
+            // Logic only required when invalid tags in use
             when(getCacheUsage() + invalidTags > totalWays) {
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
@@ -658,7 +659,7 @@ class Cache(
                   validTags := validTags - 1 // Decrease Valid Tag Counter
                   cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
                   decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
-               }
+                }
               }
             }
 
