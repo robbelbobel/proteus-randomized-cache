@@ -61,16 +61,21 @@ object createStaticPipeline {
         new Cache(
           sets = 4,
           ways = 2,
-          skews = 32,
+          skews = 2,
           backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
         ),
         new Cache(
-          sets = 4,
-          ways = 2,
-          skews = 32,
+          sets = 16,
+          ways = 4,
+          skews = 1,
           backbone.filterDBus,
+          randomizedSetIndexing = True,
+          replacementPolicy = ReplacementPolicy.RPLRU,
+          skewApproach = SkewApproach.RS, 
+          invalidTags = 0,
+          evictionPolicy = EvictionPolicy.LE,
           cacheable = (_ >= 0x80000000L)
         ),
         new CsrFile(pipeline.writeback, pipeline.writeback), // TODO: ugly
@@ -282,7 +287,7 @@ object createDynamicPipeline {
         new Cache(
           sets = 4,
           ways = 2,
-          skews = 32,
+          skews = 2,
           pipeline.backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2
@@ -290,7 +295,7 @@ object createDynamicPipeline {
         new Cache(
           sets = 4,
           ways = 2,
-          skews = 32,
+          skews = 2,
           busFilter = pipeline.backbone.filterDBus,
           cacheable = (_ >= 0x80000000L)
         ),

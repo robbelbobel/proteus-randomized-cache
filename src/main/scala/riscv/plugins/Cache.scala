@@ -74,6 +74,11 @@ class Cache(
     val way: UInt = UInt(log2Up(ways) bits)
   }
 
+  class SkewUsage() extends Bundle {
+    val skew: UInt = UInt(log2Up(skews) bits)
+    val usage: UInt = UInt(log2Up(ways) bits)
+  }
+
   private def getSetIndex(address: UInt): UInt = {
     if (randomizedSetIndexing == True && (setIndexBits % 2) == 0) {
       val half = setIndexBits / 2
@@ -83,12 +88,12 @@ class Cache(
       var R = address(byteIndexBits + wordIndexBits + half, half bits)
 
       for (i <- 0 until feistelStages) {
-        var temp = L
-        L = R ^ key(i)
-        R = temp
+        var temp = R ^ key(i)
+        R = L
+        L = temp
       }
 
-      U(L ## R)
+      (L ## R).asUInt
     } else {
       // Default to Standard Set-Associative Indexing
       address(byteIndexBits + wordIndexBits, setIndexBits bits)
@@ -190,24 +195,17 @@ class Cache(
         } else {
           // Load Aware
           // Calculate usage of skews
-          val usage = Vec.fill(skews)(UInt(log2Up(ways) bits))
-          for (i <- 0 until skews) {
-            usage(i) := getSkewUsage(set, U(i, log2Up(skews) bits))
+          val usage = (0 until skews).map { i => 
+            val s = new SkewUsage()
+            s.skew := U(i, log2Up(skews) bits)
+            s.usage := getSkewUsage(set, U(i, log2Up(skews) bits))
+            s
           }
-
+            
           // Find skew with lowest usage
-          val result = Reg(UInt(log2Up(skews) bits))
-          result := 0
-          for (i <- 0 until skews) {
-            when(usage(i) < usage(result)) {
-              result := i
-            }
-            when(usage(i) === usage(result)) {
-              // todo: Randomness Here
-            }
-          }
+          val best = usage.reduceBalancedTree((a, b) => Mux(a.usage < b.usage, a, b))
 
-          result
+          best.skew
         }
       }
 
