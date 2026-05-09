@@ -47,9 +47,6 @@ class Cache(
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setIndexBits = log2Up(sets)
 
-  // RNG
-  private var rngBufferIndex: Int = 0
-
   // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
   assert(sets > 0 && setIndexBits % 2 == 0, "Set index bits must be divisable by 2")
 
@@ -111,11 +108,6 @@ class Cache(
 
   private def connect(_s: Stage, internal: MemBus, external: MemBus): Unit = {
     val cacheArea = pipeline plug new Area {
-      val rngService = pipeline.service[RngService]
-      val rng = new RngIo
-      rng.rdata_request := False // TODO: This should be handled by isSlave!!
-      rng <> rngService.getRngBuffer(rngBufferIndex)
-
       private val totalWays: Int = ways * skews * sets
 
       private val idWidth = internal.config.idWidth
@@ -142,6 +134,28 @@ class Cache(
       private val decrementOutstandingPrefetches = Bool()
       incrementOutstandingPrefetches := False
       decrementOutstandingPrefetches := False
+
+      // RNG
+      private val rngState = RegInit(U(BigInt(config.xlen * 2, scala.util.Random), config.xlen * 2 bits))
+      private val rngMutliplier = BigInt(config.xlen * 2, scala.util.Random)
+      private val rngIncrement = BigInt(config.xlen * 2, scala.util.Random) | 1 // odd!
+      private val pcg = RegInit(U(0, config.xlen bits))
+
+      private def rotr32(x : UInt, r : UInt) : UInt =
+      {
+        (x >> r).resize(config.xlen bits) | (x << (config.xlen - r)).resize(config.xlen bits)
+      }
+
+      private def pcg32() : UInt = {
+        pcg := pcg + 1
+
+        val count = rngState >> 59 // 64 - 59 = 5 -> 5 bit rotation (32 bit possible rotations)
+
+        val x = rngState ^ (rngState >> 18).resize(config.xlen * 2 bits) // 18 = (64 - 27)/2
+        rngState := (rngState * rngMutliplier + rngIncrement).resize(config.xlen * 2 bits)
+
+        rotr32((x >> 27).resize(config.xlen bits), count) // 27 = 32 - 5
+      }
 
       // this logic is to avoid problems when incrementing and decrementing in the same cycle
       when(incrementOutstandingPrefetches && !decrementOutstandingPrefetches) {
@@ -188,8 +202,7 @@ class Cache(
 
         if (skewApproach == SkewApproach.RS) {
           // Random Selection
-          val (rngValid, rngValue) = rng.get()
-          assert(rngValid, "Invalid rng value generated")
+          val rngValue = pcg32()
 
           (rngValue % skews).resize(log2Up(skews) bits)
         } else {
@@ -249,8 +262,7 @@ class Cache(
         // Evicts a Way Globally -> Choose Randomly
         val result = WayResult()
 
-        val (rngValid, rngValue) = rng.get()
-        assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
+        val rngValue = pcg32()
 
         result.way := rngValue(log2Up(ways) - 1 downto 0).resized
         result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
@@ -272,8 +284,7 @@ class Cache(
           return wayResult
         } else {
           // Random Approach
-          val (rngValid, rngValue) = rng.get()
-          assert(rngValid, "Received an invalid rng value") // TODO: Handle invalid rng value
+          val rngValue = pcg32()
 
           val wayResult = WayResult()
 
@@ -692,12 +703,6 @@ class Cache(
   }
 
   /** PHASES * */
-  override def setup(): Unit = {
-    // RNG
-    val rngService = pipeline.service[RngService]
-    rngBufferIndex = rngService.registerRngBuffer(new RngFifo())
-  }
-
   override def build(): Unit = {
     busFilter(connect)
   }

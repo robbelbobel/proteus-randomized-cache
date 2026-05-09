@@ -69,10 +69,10 @@ object createStaticPipeline {
         new Cache(
           sets = 16,
           ways = 4,
-          skews = 1,
+          skews = 2,
           backbone.filterDBus,
-          randomizedSetIndexing = False,
-          replacementPolicy = ReplacementPolicy.RPLRU,
+          randomizedSetIndexing = True,
+          replacementPolicy = ReplacementPolicy.RAN,
           skewApproach = SkewApproach.RS,
           invalidTags = 0,
           evictionPolicy = EvictionPolicy.LE,
@@ -87,7 +87,6 @@ object createStaticPipeline {
         new MulDiv(Set(pipeline.execute)),
         new Fence(Set(pipeline.execute)),
         new Marker,
-        new Rng(allowUninitializedRng = true) // Allow the use of the hardcoded key
       ) ++ extraPlugins
     )
 
@@ -312,7 +311,6 @@ object createDynamicPipeline {
         new Fence(pipeline.rsStages.toSet),
         new Marker,
         new SpeculationTracking,
-        new Rng(allowUninitializedRng = true) // Allow the use of the hardcoded key
       ) ++ extraPlugins
     )
 
