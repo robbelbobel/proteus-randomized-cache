@@ -655,10 +655,15 @@ class Cache(
             for (j <- 0 until skews) {
               for (i <- 0 until ways) {
                 when(cache(indexBits)(j)(i).tag === tagBits) {
-                  cache(indexBits)(j)(i).valid := False
-                  validTags := validTags - 1 // Decrease Valid Tag Counter
-                  cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
+                  when(cache(indexBits)(j)(i).valid === True) {
+                    // Invalidate Line
+                    validTags := validTags - 1 // Decrease Valid Tag Counter
+                    cache(indexBits)(j)(i).valid := False
+                  }
+
+                  // Maximize Age of Line
                   decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
+                  cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
                 }
               }
             }

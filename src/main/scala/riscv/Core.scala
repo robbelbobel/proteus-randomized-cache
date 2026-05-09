@@ -202,7 +202,7 @@ object CoreTestSim {
 object CoreExtMem32 {
   def main(args: Array[String]) {
     implicit val config = new Config(BaseIsa.RV32I)
-    SpinalVerilog(SoC.static(RamType.ExternalAxi4(1 GiB), 32, applyDelayToIBus = false))
+    SpinalVerilog(SoC.static(RamType.ExternalAxi4(1 GiB), 64, applyDelayToIBus = false))
   }
 }
 
