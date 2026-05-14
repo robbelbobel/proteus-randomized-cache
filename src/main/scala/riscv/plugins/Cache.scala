@@ -120,11 +120,6 @@ class Cache(
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
       private val forwardedLoads = RegInit(UInt(config.xlen bits).getZero)
-      private val validTags =
-        RegInit(
-          UInt(config.xlen bits).getZero
-        ) // Tracks the amount of valid tags currently in this cache
-
       private val externalId = RegInit(UInt(external.config.idWidth bits).getZero)
 
       private val storeInCycle = Bool()
@@ -258,33 +253,27 @@ class Cache(
         result.set := rngValue(
           log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
         ).resized
+        
+        // Invalidate Entry
+        cache(result.set)(result.skew)(result.way).valid := False
 
         result
       }
 
       private def evictWayLocal(setIndex: UInt): WayResult = {
-        // Evicts a Way for a Given Set and Skew
-        if (replacementPolicy == ReplacementPolicy.PLRU) {
-          // Least Recently Used Approach
-          val wayResult = oldestWay(setIndex)
-          cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
-          increaseAgesUpTo(setIndex, ways * skews - 1)
+        // Randomly Evict Way Locally
+        val result = WayResult()
+        
+        val rngValue = pcg32()
 
-          wayResult
-        } else {
-          // Random Approach
-          val rngValue = pcg32()
+        result.way := rngValue(log2Up(ways) - 1 downto 0).resized
+        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto 0).resized
+        result.set := setIndex
 
-          val wayResult = WayResult()
-
-          wayResult.set := setIndex
-          wayResult.way := rngValue(log2Up(ways) downto 0).resized
-          wayResult.skew := rngValue(rngValue.high downto rngValue.high - log2Up(skews)).resized
-          cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
-
-          wayResult
-        }
-      }
+        // Invalidate Entry
+        cache(result.set)(result.skew)(result.way).valid := False
+        result
+     }
 
       private val sendingImmediateCmd = Bool()
       private val sendingBufferedCmd = Reg(Bool()).init(False)
@@ -352,40 +341,63 @@ class Cache(
             !(storeInCycle &&
               getSignificantBits(address, key) === getSignificantBits(internal.cmd.address, key))
         ) {
-          val stored = cache(setIndex)(skew).map(!_.valid).reduce(_ || _)
+          val usage = getCacheUsage()
+          var inserted = False
 
           for (i <- 0 until ways) {
-            when(cache(setIndex)(skew)(i).valid === False) {
+            when(!inserted && cache(setIndex)(skew)(i).valid === False) {
               // Free Entry Found -> Insert Here
               cache(setIndex)(skew)(i).valid := True
               cache(setIndex)(skew)(i).tag := tag
               cache(setIndex)(skew)(i).value := external.rsp.rdata
               cache(setIndex)(skew)(i).age := U(0).resized
 
-              validTags := validTags + 1 // May Trigger an Eviction
               if (replacementPolicy == ReplacementPolicy.PLRU) {
                 increaseAgesUpTo(
                   setIndex,
                   ways * skews - 1
                 ) // Increase Ages when PLRU is used
               }
+
+              inserted = True
             }
           }
 
-          when(stored === False) {
+          when(inserted === False) {
             // No Free Ways -> Evict Way and use evicted entry
-            val wayResult = evictWayLocal(setIndex)
-            increaseAgesUpTo(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
+            if (replacementPolicy == ReplacementPolicy.PLRU) {
+              // Least Recently Used Approach
+              val wayResult = oldestWay(setIndex)
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
+              increaseAgesUpTo(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
 
-            cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
-            cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
-            cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
-            cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
+              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
+              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
+              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+
+
+            } else {
+              // Random Approach
+              val rngValue = pcg32()
+
+              val wayResult = WayResult()
+
+              wayResult.set := setIndex
+              wayResult.way := rngValue(log2Up(ways) downto 0).resized
+              wayResult.skew := rngValue(rngValue.high downto rngValue.high - log2Up(skews)).resized
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
+
+              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
+              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
+              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
+              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+            }
           }
 
           if (invalidTags != 0) {
             // Logic only required when invalid tags in use
-            when(getCacheUsage() + invalidTags > totalWays) {
+            when(usage + invalidTags + inserted.asUInt.resized > totalWays) {
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
@@ -657,7 +669,6 @@ class Cache(
                 when(cache(indexBits)(j)(i).tag === tagBits) {
                   when(cache(indexBits)(j)(i).valid === True) {
                     // Invalidate Line
-                    validTags := validTags - 1 // Decrease Valid Tag Counter
                     cache(indexBits)(j)(i).valid := False
                   }
 

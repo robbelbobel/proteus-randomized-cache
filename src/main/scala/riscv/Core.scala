@@ -74,7 +74,7 @@ object createStaticPipeline {
           randomizedSetIndexing = true,
           replacementPolicy = ReplacementPolicy.RAN,
           skewApproach = SkewApproach.RS,
-          invalidTags = 0,
+          invalidTags = 2,
           evictionPolicy = EvictionPolicy.LE,
           cacheable = (_ >= 0x80000000L)
         ),
