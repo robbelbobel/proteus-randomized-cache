@@ -131,6 +131,14 @@ class Cache(
       incrementOutstandingPrefetches := False
       decrementOutstandingPrefetches := False
 
+      // Valid Tag Counter 
+      private val tagEvicted = False // Through Eviction
+      private val tagInvalidated = False // Through e.g. write
+      private val tagInserted = False // Newly Inserted Tags (former invalid tags)
+      private val validTags = RegInit(UInt(log2Up(sets * skews * ways + 1) bits).getZero)
+
+      validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
+
       // RNG
       private val rngState = RegInit(U(BigInt(config.xlen * 2, scala.util.Random), config.xlen * 2 bits))
       private val rngMutliplier = BigInt(config.xlen * 2, scala.util.Random)
@@ -144,7 +152,7 @@ class Cache(
       private def pcg32() : UInt = {
         val count = rngState >> 59 // 64 - 59 = 5 -> 5 bit rotation (32 bit possible rotations)
 
-        val x = rngState ^ (rngState >> 18).resize(config.xlen * 2 bits) // 18 = (64 - 27)/2
+        val x = rngState ^ (rngState >> 18).resize(config.xlen * 2 bits) // 18 = (64 - 27)/2 
         rngState := (rngState * rngMutliplier + rngIncrement).resize(config.xlen * 2 bits)
 
         rotr32((x >> 27).resize(config.xlen bits), count)
@@ -164,19 +172,6 @@ class Cache(
         }
 
         counts.reduceBalancedTree((_ + _)).resize(log2Up(ways + 1) bits)
-      }
-
-      private def getCacheUsage(): UInt = {
-        val max = sets * skews * ways
-        val width = log2Up(max + 1)
-        
-        val counts = (for {
-          i <- 0 until sets
-          j <- 0 until skews
-          k <- 0 until ways
-        } yield cache(i)(j)(k).valid.asUInt.resize(width))
-
-        counts.reduceBalancedTree(_ + _)
       }
 
       private def getSkew(set: UInt): UInt = {
@@ -212,7 +207,7 @@ class Cache(
 
         for (i <- 0 until skews) {
           for (j <- 0 until ways) {
-            when(cache(set)(i)(j).age === ways - 1 || !cache(set)(i)(j).valid) {
+            when(cache(set)(i)(j).age === (ways * skews - 1) || !cache(set)(i)(j).valid) {
               result.skew := i
               result.way := j
             }
@@ -254,7 +249,11 @@ class Cache(
           log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
         ).resized
         
-        // Invalidate Entry
+        // Evict Entry
+        when(cache(result.set)(result.skew)(result.way).valid) {
+          tagEvicted := True
+        }
+
         cache(result.set)(result.skew)(result.way).valid := False
 
         result
@@ -267,11 +266,16 @@ class Cache(
         val rngValue = pcg32()
 
         result.way := rngValue(log2Up(ways) - 1 downto 0).resized
-        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto 0).resized
+        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
         result.set := setIndex
 
-        // Invalidate Entry
+        // Evict Entry
+        when(cache(result.set)(result.skew)(result.way).valid) {
+          tagEvicted := True
+        }
+
         cache(result.set)(result.skew)(result.way).valid := False
+
         result
      }
 
@@ -327,9 +331,13 @@ class Cache(
       }
 
       private def insertRspInCache(address: UInt): Unit = {
-        val setIndex = getSetIndex(address, key)
-        val tag = getTagBits(address)
-        val skew = if (skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
+        val hit = wayForAddress(address)
+
+        when (hit.valid) {
+          // Rsp already stored in cache -> Decrease Age Only
+          increaseAgesUpTo(hit.payload.set, cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age)
+          cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age := U(0).resized
+        }
 
         outstandingLoads(external.rsp.id).pending := False
         outstandingLoads(external.rsp.id).storeInvalidated := False
@@ -339,35 +347,45 @@ class Cache(
           !outstandingLoads(external.rsp.id).storeInvalidated &&
             cacheable(address) &&
             !(storeInCycle &&
-              getSignificantBits(address, key) === getSignificantBits(internal.cmd.address, key))
+              getSignificantBits(address, key) === getSignificantBits(internal.cmd.address, key)) &&
+              ! hit.valid
         ) {
-          val usage = getCacheUsage()
-          var inserted = False
+          val setIndex = getSetIndex(address, key)
+          val tag = getTagBits(address)
+          val skew = if (skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
+ 
+          val inserted = Bool()
+          inserted := False
 
           for (i <- 0 until ways) {
             when(!inserted && cache(setIndex)(skew)(i).valid === False) {
+              if (replacementPolicy == ReplacementPolicy.PLRU) {
+                // Increase Ages when PLRU is used
+                increaseAgesUpTo(
+                  setIndex,
+                  ways * skews - 1
+                )               
+              }
+
               // Free Entry Found -> Insert Here
               cache(setIndex)(skew)(i).valid := True
               cache(setIndex)(skew)(i).tag := tag
               cache(setIndex)(skew)(i).value := external.rsp.rdata
               cache(setIndex)(skew)(i).age := U(0).resized
 
-              if (replacementPolicy == ReplacementPolicy.PLRU) {
-                increaseAgesUpTo(
-                  setIndex,
-                  ways * skews - 1
-                ) // Increase Ages when PLRU is used
-              }
+              inserted := True
 
-              inserted = True
+              // Updated TagInserted
+              tagInserted := True
             }
           }
 
           when(inserted === False) {
-            // No Free Ways -> Evict Way and use evicted entry
+            // No Free Ways -> Use Replacement Policy
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Least Recently Used Approach
               val wayResult = oldestWay(setIndex)
+
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
               increaseAgesUpTo(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
 
@@ -375,8 +393,6 @@ class Cache(
               cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
               cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
               cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
-
-
             } else {
               // Random Approach
               val rngValue = pcg32()
@@ -386,7 +402,6 @@ class Cache(
               wayResult.set := setIndex
               wayResult.way := rngValue(log2Up(ways) downto 0).resized
               wayResult.skew := rngValue(rngValue.high downto rngValue.high - log2Up(skews)).resized
-              cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
 
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
               cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
@@ -397,7 +412,7 @@ class Cache(
 
           if (invalidTags != 0) {
             // Logic only required when invalid tags in use
-            when(usage + invalidTags + inserted.asUInt.resized > totalWays) {
+            when(validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized + invalidTags > totalWays) {
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
@@ -409,6 +424,7 @@ class Cache(
             }
           }
         }
+
         external.rsp.ready := True
       }
 
@@ -670,6 +686,8 @@ class Cache(
                   when(cache(indexBits)(j)(i).valid === True) {
                     // Invalidate Line
                     cache(indexBits)(j)(i).valid := False
+                    // Update Tag Invalidated
+                    tagInvalidated := True
                   }
 
                   // Maximize Age of Line
