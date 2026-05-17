@@ -354,33 +354,39 @@ class Cache(
           val tag = getTagBits(address)
           val skew = if (skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
  
-          val inserted = Bool()
-          inserted := False
+          val found = Bool()
+          found := False
+
+          val freeidx = UInt(log2Up(ways) bits)
+          freeidx := 0
 
           for (i <- 0 until ways) {
-            when(!inserted && cache(setIndex)(skew)(i).valid === False) {
-              if (replacementPolicy == ReplacementPolicy.PLRU) {
-                // Increase Ages when PLRU is used
-                increaseAgesUpTo(
-                  setIndex,
-                  ways * skews - 1
-                )               
-              }
-
-              // Free Entry Found -> Insert Here
-              cache(setIndex)(skew)(i).valid := True
-              cache(setIndex)(skew)(i).tag := tag
-              cache(setIndex)(skew)(i).value := external.rsp.rdata
-              cache(setIndex)(skew)(i).age := U(0).resized
-
-              inserted := True
-
-              // Updated TagInserted
-              tagInserted := True
+            when (!cache(setIndex)(skew)(i).valid) {
+              freeidx := i
+              found := True
             }
           }
 
-          when(inserted === False) {
+          when(found) {
+            if (replacementPolicy == ReplacementPolicy.PLRU) {
+              // Increase Ages when PLRU is used
+              increaseAgesUpTo(
+                setIndex,
+                ways * skews - 1
+              )               
+            }
+
+            // Free Entry Found -> Insert Here
+            cache(setIndex)(skew)(freeidx).valid := True
+            cache(setIndex)(skew)(freeidx).tag := tag
+            cache(setIndex)(skew)(freeidx).value := external.rsp.rdata
+            cache(setIndex)(skew)(freeidx).age := U(0).resized
+
+            // Updated TagInserted
+            tagInserted := True
+          }
+
+          when(!found) {
             // No Free Ways -> Use Replacement Policy
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Least Recently Used Approach
