@@ -193,24 +193,21 @@ class Cache(
           }
 
           // Find skew with lowest usage
-          val best = usage.reduceBalancedTree((a, b) => Mux(a.usage < b.usage, a, b))
+          val best = usage.reduceBalancedTree((a, b) => Mux(a.usage === b.usage, (Mux(pcg32()(0), a, b)), Mux(a.usage < b.usage, a, b)))
 
           best.skew
         }
       }
 
-      private def oldestWay(set: UInt): WayResult = {
+      private def oldestWay(set: UInt, skew: UInt): WayResult = {
         val result = WayResult()
         result.set := set
-        result.skew := 0
+        result.skew := skew
         result.way := 0
 
-        for (i <- 0 until skews) {
-          for (j <- 0 until ways) {
-            when(cache(set)(i)(j).age === (ways * skews - 1) || !cache(set)(i)(j).valid) {
-              result.skew := i
-              result.way := j
-            }
+        for (i <- 0 until ways) {
+          when(cache(set)(skew)(i).age === (ways * skews - 1) || !cache(set)(skew)(i).valid) {
+            result.way := i
           }
         }
 
@@ -259,14 +256,14 @@ class Cache(
         result
       }
 
-      private def evictWayLocal(setIndex: UInt): WayResult = {
+      private def evictWayLocal(setIndex: UInt, skewIndex: UInt): WayResult = {
         // Randomly Evict Way Locally
         val result = WayResult()
         
         val rngValue = pcg32()
 
         result.way := rngValue(log2Up(ways) - 1 downto 0).resized
-        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
+        result.skew := skewIndex
         result.set := setIndex
 
         // Evict Entry
@@ -353,7 +350,7 @@ class Cache(
           val setIndex = getSetIndex(address, key)
           val tag = getTagBits(address)
           val skew = if (skews >= 2) getSkew(setIndex) else U(0, log2Up(skews) bits)
- 
+
           val found = Bool()
           found := False
 
@@ -390,7 +387,7 @@ class Cache(
             // No Free Ways -> Use Replacement Policy
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Least Recently Used Approach
-              val wayResult = oldestWay(setIndex)
+              val wayResult = oldestWay(setIndex, skew)
 
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
               increaseAgesUpTo(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
@@ -407,7 +404,7 @@ class Cache(
 
               wayResult.set := setIndex
               wayResult.way := rngValue(log2Up(ways) downto 0).resized
-              wayResult.skew := rngValue(rngValue.high downto rngValue.high - log2Up(skews)).resized
+              wayResult.skew := skew
 
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
               cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
@@ -422,7 +419,7 @@ class Cache(
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
-                evictWayLocal(setIndex)
+                evictWayLocal(setIndex, skew)
               } else {
                 // Global Eviction
                 evictWayGlobal()
