@@ -206,7 +206,7 @@ class Cache(
         result.way := 0
 
         for (i <- 0 until ways) {
-          when(cache(set)(skew)(i).age === (ways * skews - 1) || !cache(set)(skew)(i).valid) {
+          when(cache(set)(skew)(i).age === (ways - 1) || !cache(set)(skew)(i).valid) {
             result.way := i
           }
         }
@@ -214,22 +214,18 @@ class Cache(
         result
       }
 
-      private def increaseAgesUpTo(set: UInt, oldest: UInt): Unit = {
-        for (j <- 0 until skews) {
-          for (i <- 0 until ways) {
-            when(cache(set)(j)(i).age < oldest) {
-              cache(set)(j)(i).age := cache(set)(j)(i).age + 1
-            }
+      private def increaseAgesUpTo(set: UInt, skew: UInt, oldest: UInt): Unit = {
+        for (i <- 0 until ways) {
+          when(cache(set)(skew)(i).age < oldest) {
+            cache(set)(skew)(i).age := cache(set)(skew)(i).age + 1
           }
         }
       }
 
-      private def decreaseAgesUntil(set: UInt, youngest: UInt): Unit = {
-        for (j <- 0 until skews) {
-          for (i <- 0 until ways) {
-            when(cache(set)(j)(i).age > youngest) {
-              cache(set)(j)(i).age := cache(set)(j)(i).age - 1
-            }
+      private def decreaseAgesUntil(set: UInt, skew: UInt, youngest: UInt): Unit = {
+        for (i <- 0 until ways) {
+          when(cache(set)(skew)(i).age > youngest) {
+            cache(set)(skew)(i).age := cache(set)(skew)(i).age - 1
           }
         }
       }
@@ -332,7 +328,7 @@ class Cache(
 
         when (hit.valid) {
           // Rsp already stored in cache -> Decrease Age Only
-          increaseAgesUpTo(hit.payload.set, cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age)
+          increaseAgesUpTo(hit.payload.set, hit.payload.skew, cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age)
           cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age := U(0).resized
         }
 
@@ -369,7 +365,8 @@ class Cache(
               // Increase Ages when PLRU is used
               increaseAgesUpTo(
                 setIndex,
-                ways * skews - 1
+                skew,
+                ways - 1
               )               
             }
 
@@ -390,7 +387,7 @@ class Cache(
               val wayResult = oldestWay(setIndex, skew)
 
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
-              increaseAgesUpTo(setIndex, cache(setIndex)(wayResult.skew)(wayResult.way).age)
+              increaseAgesUpTo(setIndex, skew, cache(setIndex)(wayResult.skew)(wayResult.way).age)
 
               cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
               cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
@@ -631,6 +628,7 @@ class Cache(
           cacheSet(targetWay.payload.skew)(targetWay.payload.way).age := U(0).resized
           increaseAgesUpTo(
             setIndex,
+            targetWay.payload.skew,
             cacheSet(targetWay.payload.skew)(targetWay.payload.way).age
           )
 
@@ -694,7 +692,7 @@ class Cache(
                   }
 
                   // Maximize Age of Line
-                  decreaseAgesUntil(indexBits, cache(indexBits)(j)(i).age)
+                  decreaseAgesUntil(indexBits, U(j, log2Up(skews) bits), cache(indexBits)(j)(i).age)
                   cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
                 }
               }
