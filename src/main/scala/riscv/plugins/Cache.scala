@@ -72,6 +72,7 @@ class Cache(
 
   private def getSetIndex(address: UInt, key: Vec[UInt]): UInt = {
     if (randomizedSetIndexing == true && (setIndexBits % 2) == 0) {
+      assert(setIndexBits % 2 == 0)
       val half = setIndexBits / 2
 
       // 4-Stage Feistel-Network
