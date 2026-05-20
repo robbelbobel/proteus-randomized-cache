@@ -67,7 +67,7 @@ class Cache(
     val skew: UInt = UInt(log2Up(skews) bits)
     val usage: UInt = UInt(log2Up(ways + 1) bits)
   }
-  
+
   private val feistelStages = 4
 
   private def getSetIndex(address: UInt, key: Vec[UInt]): UInt = {
@@ -131,7 +131,7 @@ class Cache(
       incrementOutstandingPrefetches := False
       decrementOutstandingPrefetches := False
 
-      // Valid Tag Counter 
+      // Valid Tag Counter
       private val tagEvicted = False // Through Eviction
       private val tagInvalidated = False // Through e.g. write
       private val tagInserted = False // Newly Inserted Tags (former invalid tags)
@@ -140,19 +140,19 @@ class Cache(
       validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
 
       // RNG
-      private val rngState = RegInit(U(BigInt(config.xlen * 2, scala.util.Random), config.xlen * 2 bits))
+      private val rngState =
+        RegInit(U(BigInt(config.xlen * 2, scala.util.Random), config.xlen * 2 bits))
       private val rngMutliplier = BigInt(config.xlen * 2, scala.util.Random)
       private val rngIncrement = BigInt(config.xlen * 2, scala.util.Random) | 1 // odd!
 
-      private def rotr32(x : UInt, r : UInt) : UInt =
-      {
+      private def rotr32(x: UInt, r: UInt): UInt = {
         (x >> r).resize(config.xlen bits) | (x << (config.xlen - r)).resize(config.xlen bits)
       }
 
-      private def pcg32() : UInt = {
+      private def pcg32(): UInt = {
         val count = rngState >> 59 // 64 - 59 = 5 -> 5 bit rotation (32 bit possible rotations)
 
-        val x = rngState ^ (rngState >> 18).resize(config.xlen * 2 bits) // 18 = (64 - 27)/2 
+        val x = rngState ^ (rngState >> 18).resize(config.xlen * 2 bits) // 18 = (64 - 27)/2
         rngState := (rngState * rngMutliplier + rngIncrement).resize(config.xlen * 2 bits)
 
         rotr32((x >> 27).resize(config.xlen bits), count)
@@ -193,7 +193,9 @@ class Cache(
           }
 
           // Find skew with lowest usage
-          val best = usage.reduceBalancedTree((a, b) => Mux(a.usage === b.usage, (Mux(pcg32()(0), a, b)), Mux(a.usage < b.usage, a, b)))
+          val best = usage.reduceBalancedTree((a, b) =>
+            Mux(a.usage === b.usage, (Mux(pcg32()(0), a, b)), Mux(a.usage < b.usage, a, b))
+          )
 
           best.skew
         }
@@ -214,7 +216,7 @@ class Cache(
         result
       }
 
-      private def increaseAgesUpTo(skew: UInt, set:UInt, oldest: UInt): Unit = {
+      private def increaseAgesUpTo(skew: UInt, set: UInt, oldest: UInt): Unit = {
         for (i <- 0 until ways) {
           when(cache(skew)(set)(i).age < oldest) {
             cache(skew)(set)(i).age := cache(skew)(set)(i).age + 1
@@ -241,7 +243,7 @@ class Cache(
         result.set := rngValue(
           log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
         ).resized
-        
+
         // Evict Entry
         when(cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
@@ -255,7 +257,7 @@ class Cache(
       private def evictWayLocal(skewIndex: UInt, setIndex: UInt): WayResult = {
         // Randomly Evict Way Locally
         val result = WayResult()
-        
+
         val rngValue = pcg32()
 
         result.way := rngValue(log2Up(ways) - 1 downto 0).resized
@@ -270,7 +272,7 @@ class Cache(
         cache(result.skew)(result.set)(result.way).valid := False
 
         result
-     }
+      }
 
       private val sendingImmediateCmd = Bool()
       private val sendingBufferedCmd = Reg(Bool()).init(False)
@@ -326,10 +328,19 @@ class Cache(
       private def insertRspInCache(address: UInt): Unit = {
         val hit = wayForAddress(address)
 
-        when (hit.valid) {
+        when(hit.valid && cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).valid) {
           // Rsp already stored in cache -> Decrease Age Only
-          increaseAgesUpTo(hit.payload.skew, hit.payload.set, cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age)
-          cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age := U(0).resized
+          if (replacementPolicy == ReplacementPolicy.PLRU) {
+            increaseAgesUpTo(
+              hit.payload.skew,
+              hit.payload.set,
+              cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age
+            )
+
+            cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age := U(0).resized
+          }
+
+          cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).value := external.rsp.rdata
         }
 
         outstandingLoads(external.rsp.id).pending := False
@@ -341,7 +352,7 @@ class Cache(
             cacheable(address) &&
             !(storeInCycle &&
               getSignificantBits(address, key) === getSignificantBits(internal.cmd.address, key)) &&
-              ! hit.valid
+            !hit.valid
         ) {
           val setIndex = getSetIndex(address, key)
           val tag = getTagBits(address)
@@ -354,7 +365,7 @@ class Cache(
           freeidx := 0
 
           for (i <- 0 until ways) {
-            when (!cache(skew)(setIndex)(i).valid) {
+            when(!cache(skew)(setIndex)(i).valid) {
               freeidx := i
               found := True
             }
@@ -367,7 +378,7 @@ class Cache(
                 skew,
                 setIndex,
                 ways - 1
-              )               
+              )
             }
 
             // Free Entry Found -> Insert Here
@@ -412,7 +423,9 @@ class Cache(
 
           if (invalidTags != 0) {
             // Logic only required when invalid tags in use
-            when(validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized + invalidTags > totalWays) {
+            when(
+              validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized + invalidTags > totalWays
+            ) {
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
@@ -459,7 +472,7 @@ class Cache(
             insertRspInCache(address)
             alreadySendingRsp := False
           } otherwise {
-              alreadySendingRsp := True
+            alreadySendingRsp := True
           }
         }
       }
@@ -645,7 +658,10 @@ class Cache(
               alreadyPending := True
               // if the load is already pending but result not yet received: mark it to be forwarded + increase cache misses
               when(
-                !(external.rsp.valid && getSignificantBits(load.address, key) === getSignificantBits(
+                !(external.rsp.valid && getSignificantBits(
+                  load.address,
+                  key
+                ) === getSignificantBits(
                   outstandingLoads(external.rsp.id).address,
                   key
                 ))
@@ -701,7 +717,8 @@ class Cache(
             for (i <- 0 until outstandingLoads.length) {
               when(
                 getSignificantBits(outstandingLoads(i).address, key) === getSignificantBits(
-                  internal.cmd.address, key
+                  internal.cmd.address,
+                  key
                 ) && outstandingLoads(i).pending
               ) {
                 outstandingLoads(i).storeInvalidated := True

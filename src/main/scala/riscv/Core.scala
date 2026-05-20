@@ -86,7 +86,7 @@ object createStaticPipeline {
         new Interrupts(pipeline.writeback),
         new MulDiv(Set(pipeline.execute)),
         new Fence(Set(pipeline.execute)),
-        new Marker,
+        new Marker
       ) ++ extraPlugins
     )
 
@@ -310,7 +310,7 @@ object createDynamicPipeline {
         new Timers,
         new Fence(pipeline.rsStages.toSet),
         new Marker,
-        new SpeculationTracking,
+        new SpeculationTracking
       ) ++ extraPlugins
     )
 
