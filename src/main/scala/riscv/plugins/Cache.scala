@@ -71,8 +71,7 @@ class Cache(
   private val feistelStages = 4
 
   private def getSetIndex(address: UInt, key: Vec[UInt]): UInt = {
-    if (randomizedSetIndexing == true && (setIndexBits % 2) == 0) {
-      assert(setIndexBits % 2 == 0)
+    if (randomizedSetIndexing == true) {
       val half = setIndexBits / 2
 
       // 4-Stage Feistel-Network
@@ -107,7 +106,7 @@ class Cache(
       private val key = Vec.fill(feistelStages)(Reg(UInt(setIndexBits / 2 bits)))
 
       for (i <- 0 until feistelStages) {
-        key(i) := scala.util.Random.nextInt(setIndexBits / 2)
+        key(i) := scala.util.Random.nextInt(1 << (setIndexBits / 2))
       }
 
       private val totalWays: Int = ways * skews * sets
