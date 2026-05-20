@@ -53,7 +53,7 @@ class Cache(
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
-    val age: UInt = UInt(log2Up(sets * skews * ways) bits)
+    val age: UInt = UInt(log2Up(ways) bits)
     val valid: Bool = Bool()
   }
 
@@ -115,7 +115,7 @@ class Cache(
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
       private val cache =
-        Vec.fill(sets)(Vec.fill(skews)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
+        Vec.fill(skews)(Vec.fill(sets)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
 
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
       private val cacheMisses = RegInit(UInt(config.xlen bits).getZero)
@@ -168,7 +168,7 @@ class Cache(
       private def getSkewUsage(set: UInt, skew: UInt): UInt = {
         // Count valid ways in provided skew
         val counts = (0 until ways).map { i =>
-          cache(set)(skew)(i).valid.asUInt.resized
+          cache(skew)(set)(i).valid.asUInt.resized
         }
 
         counts.reduceBalancedTree((_ + _)).resize(log2Up(ways + 1) bits)
@@ -199,14 +199,14 @@ class Cache(
         }
       }
 
-      private def oldestWay(set: UInt, skew: UInt): WayResult = {
+      private def oldestWay(skew: UInt, set: UInt): WayResult = {
         val result = WayResult()
         result.set := set
         result.skew := skew
         result.way := 0
 
         for (i <- 0 until ways) {
-          when(cache(set)(skew)(i).age === (ways - 1) || !cache(set)(skew)(i).valid) {
+          when(cache(skew)(set)(i).age === (ways - 1) || !cache(skew)(set)(i).valid) {
             result.way := i
           }
         }
@@ -214,18 +214,18 @@ class Cache(
         result
       }
 
-      private def increaseAgesUpTo(set: UInt, skew: UInt, oldest: UInt): Unit = {
+      private def increaseAgesUpTo(skew: UInt, set:UInt, oldest: UInt): Unit = {
         for (i <- 0 until ways) {
-          when(cache(set)(skew)(i).age < oldest) {
-            cache(set)(skew)(i).age := cache(set)(skew)(i).age + 1
+          when(cache(skew)(set)(i).age < oldest) {
+            cache(skew)(set)(i).age := cache(skew)(set)(i).age + 1
           }
         }
       }
 
-      private def decreaseAgesUntil(set: UInt, skew: UInt, youngest: UInt): Unit = {
+      private def decreaseAgesUntil(skew: UInt, set: UInt, youngest: UInt): Unit = {
         for (i <- 0 until ways) {
-          when(cache(set)(skew)(i).age > youngest) {
-            cache(set)(skew)(i).age := cache(set)(skew)(i).age - 1
+          when(cache(skew)(set)(i).age > youngest) {
+            cache(skew)(set)(i).age := cache(skew)(set)(i).age - 1
           }
         }
       }
@@ -243,16 +243,16 @@ class Cache(
         ).resized
         
         // Evict Entry
-        when(cache(result.set)(result.skew)(result.way).valid) {
+        when(cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
         }
 
-        cache(result.set)(result.skew)(result.way).valid := False
+        cache(result.skew)(result.set)(result.way).valid := False
 
         result
       }
 
-      private def evictWayLocal(setIndex: UInt, skewIndex: UInt): WayResult = {
+      private def evictWayLocal(skewIndex: UInt, setIndex: UInt): WayResult = {
         // Randomly Evict Way Locally
         val result = WayResult()
         
@@ -263,11 +263,11 @@ class Cache(
         result.set := setIndex
 
         // Evict Entry
-        when(cache(result.set)(result.skew)(result.way).valid) {
+        when(cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
         }
 
-        cache(result.set)(result.skew)(result.way).valid := False
+        cache(result.skew)(result.set)(result.way).valid := False
 
         result
      }
@@ -328,8 +328,8 @@ class Cache(
 
         when (hit.valid) {
           // Rsp already stored in cache -> Decrease Age Only
-          increaseAgesUpTo(hit.payload.set, hit.payload.skew, cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age)
-          cache(hit.payload.set)(hit.payload.skew)(hit.payload.way).age := U(0).resized
+          increaseAgesUpTo(hit.payload.skew, hit.payload.set, cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age)
+          cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age := U(0).resized
         }
 
         outstandingLoads(external.rsp.id).pending := False
@@ -354,7 +354,7 @@ class Cache(
           freeidx := 0
 
           for (i <- 0 until ways) {
-            when (!cache(setIndex)(skew)(i).valid) {
+            when (!cache(skew)(setIndex)(i).valid) {
               freeidx := i
               found := True
             }
@@ -363,18 +363,18 @@ class Cache(
           when(found) {
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Increase Ages when PLRU is used
-              increaseAgesUpTo(
-                setIndex,
+              increaseAgesUpTo( // Conflict
                 skew,
+                setIndex,
                 ways - 1
               )               
             }
 
             // Free Entry Found -> Insert Here
-            cache(setIndex)(skew)(freeidx).valid := True
-            cache(setIndex)(skew)(freeidx).tag := tag
-            cache(setIndex)(skew)(freeidx).value := external.rsp.rdata
-            cache(setIndex)(skew)(freeidx).age := U(0).resized
+            cache(skew)(setIndex)(freeidx).valid := True
+            cache(skew)(setIndex)(freeidx).tag := tag
+            cache(skew)(setIndex)(freeidx).value := external.rsp.rdata
+            cache(skew)(setIndex)(freeidx).age := U(0).resized
 
             // Updated TagInserted
             tagInserted := True
@@ -384,15 +384,15 @@ class Cache(
             // No Free Ways -> Use Replacement Policy
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Least Recently Used Approach
-              val wayResult = oldestWay(setIndex, skew)
+              val wayResult = oldestWay(skew, setIndex)
 
-              cache(setIndex)(wayResult.skew)(wayResult.way).valid := False
-              increaseAgesUpTo(setIndex, skew, cache(setIndex)(wayResult.skew)(wayResult.way).age)
+              cache(wayResult.skew)(setIndex)(wayResult.way).valid := False
+              increaseAgesUpTo(skew, setIndex, cache(wayResult.skew)(setIndex)(wayResult.way).age)
 
-              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
-              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
-              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
-              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+              cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
+              cache(wayResult.skew)(setIndex)(wayResult.way).tag := tag
+              cache(wayResult.skew)(setIndex)(wayResult.way).value := external.rsp.rdata
+              cache(wayResult.skew)(setIndex)(wayResult.way).age := U(0).resized
             } else {
               // Random Approach
               val rngValue = pcg32()
@@ -403,10 +403,10 @@ class Cache(
               wayResult.way := rngValue(log2Up(ways) downto 0).resized
               wayResult.skew := skew
 
-              cache(setIndex)(wayResult.skew)(wayResult.way).valid := True
-              cache(setIndex)(wayResult.skew)(wayResult.way).tag := tag
-              cache(setIndex)(wayResult.skew)(wayResult.way).value := external.rsp.rdata
-              cache(setIndex)(wayResult.skew)(wayResult.way).age := U(0).resized
+              cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
+              cache(wayResult.skew)(setIndex)(wayResult.way).tag := tag
+              cache(wayResult.skew)(setIndex)(wayResult.way).value := external.rsp.rdata
+              cache(wayResult.skew)(setIndex)(wayResult.way).age := U(0).resized
             }
           }
 
@@ -416,7 +416,7 @@ class Cache(
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {
                 // Local Eviction
-                evictWayLocal(setIndex, skew)
+                evictWayLocal(skew, setIndex)
               } else {
                 // Global Eviction
                 evictWayGlobal()
@@ -459,7 +459,7 @@ class Cache(
             insertRspInCache(address)
             alreadySendingRsp := False
           } otherwise {
-            alreadySendingRsp := True
+              alreadySendingRsp := True
           }
         }
       }
@@ -541,13 +541,13 @@ class Cache(
       }
 
       private def wayForAddress(address: UInt): Flow[WayResult] = {
-        val set = cache(getSetIndex(address, key))
+        val setIndex = getSetIndex(address, key)
         val tag = getTagBits(address)
         val result = Flow(WayResult())
         result.setIdle()
         for (j <- 0 until skews) {
           for (i <- 0 until ways) {
-            when(set(j)(i).valid && set(j)(i).tag === tag) {
+            when(cache(j)(setIndex)(i).valid && cache(j)(setIndex)(i).tag === tag) {
               val wayResult = WayResult()
               wayResult.set := getSetIndex(address, key)
               wayResult.skew := j
@@ -621,18 +621,18 @@ class Cache(
 
         val targetWay = wayForAddress(address) // Flow[WayResult]
         val setIndex = getSetIndex(address, key)
-        val cacheSet = cache(setIndex)
+        val cacheSet = cache(targetWay.skew)(setIndex)
         val tagBits = getTagBits(address)
 
-        when(targetWay.valid) {
-          cacheSet(targetWay.payload.skew)(targetWay.payload.way).age := U(0).resized
+        when(targetWay.valid) { // Conflict
+          cacheSet(targetWay.payload.way).age := U(0).resized
           increaseAgesUpTo(
-            setIndex,
             targetWay.payload.skew,
-            cacheSet(targetWay.payload.skew)(targetWay.payload.way).age
+            setIndex,
+            cacheSet(targetWay.payload.way).age
           )
 
-          returnFromCache(cacheSet(targetWay.payload.skew)(targetWay.payload.way))
+          returnFromCache(cacheSet(targetWay.payload.way))
         } otherwise {
           val alreadyPending = False
           for (i <- 0 until outstandingLoads.length) {
@@ -683,17 +683,17 @@ class Cache(
             // write command: invalidates line and forwards to external bus
             for (j <- 0 until skews) {
               for (i <- 0 until ways) {
-                when(cache(indexBits)(j)(i).tag === tagBits) {
-                  when(cache(indexBits)(j)(i).valid === True) {
+                when(cache(j)(indexBits)(i).tag === tagBits) {
+                  when(cache(j)(indexBits)(i).valid === True) {
                     // Invalidate Line
-                    cache(indexBits)(j)(i).valid := False
+                    cache(j)(indexBits)(i).valid := False
                     // Update Tag Invalidated
                     tagInvalidated := True
                   }
 
                   // Maximize Age of Line
-                  decreaseAgesUntil(indexBits, U(j, log2Up(skews) bits), cache(indexBits)(j)(i).age)
-                  cache(indexBits)(j)(i).age := U(ways - 1, log2Up(sets * skews * ways) bits)
+                  decreaseAgesUntil(U(j, log2Up(skews) bits), indexBits, cache(j)(indexBits)(i).age)
+                  cache(j)(indexBits)(i).age := U(ways - 1, log2Up(ways) bits)
                 }
               }
             }
