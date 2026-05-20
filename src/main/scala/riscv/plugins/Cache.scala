@@ -114,7 +114,7 @@ class Cache(
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
-      private val cache =
+private val cache =
         Vec.fill(skews)(Vec.fill(sets)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
 
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
@@ -132,11 +132,14 @@ class Cache(
       decrementOutstandingPrefetches := False
 
       // Valid Tag Counter
-      private val tagEvicted = False // Through Eviction
-      private val tagInvalidated = False // Through e.g. write
-      private val tagInserted = False // Newly Inserted Tags (former invalid tags)
+      private val tagEvicted = Bool() // Through Eviction
+      private val tagInvalidated = Bool() // Through e.g. write
+      private val tagInserted = Bool() // Newly Inserted Tags (former invalid tags)
       private val validTags = RegInit(UInt(log2Up(sets * skews * ways + 1) bits).getZero)
 
+      tagEvicted := False
+      tagInvalidated := False
+      tagInserted := False
       validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
 
       // RNG
@@ -424,7 +427,7 @@ class Cache(
           if (invalidTags != 0) {
             // Logic only required when invalid tags in use
             when(
-              validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized + invalidTags > totalWays
+              validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized > totalWays - invalidTags
             ) {
               // Valid Tag count has been exceeded
               if (evictionPolicy == EvictionPolicy.LE) {

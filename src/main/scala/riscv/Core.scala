@@ -69,7 +69,7 @@ object createStaticPipeline {
         new Cache(
           sets = 16,
           ways = 4,
-          skews = 1,
+          skews = 2,
           backbone.filterDBus,
           randomizedSetIndexing = true,
           replacementPolicy = ReplacementPolicy.RAN,
