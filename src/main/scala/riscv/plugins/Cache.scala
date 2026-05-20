@@ -131,17 +131,6 @@ private val cache =
       incrementOutstandingPrefetches := False
       decrementOutstandingPrefetches := False
 
-      // Valid Tag Counter
-      private val tagEvicted = Bool() // Through Eviction
-      private val tagInvalidated = Bool() // Through e.g. write
-      private val tagInserted = Bool() // Newly Inserted Tags (former invalid tags)
-      private val validTags = RegInit(UInt(log2Up(sets * skews * ways + 1) bits).getZero)
-
-      tagEvicted := False
-      tagInvalidated := False
-      tagInserted := False
-      validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
-
       // RNG
       private val rngState =
         RegInit(U(BigInt(config.xlen * 2, scala.util.Random), config.xlen * 2 bits))
@@ -159,6 +148,32 @@ private val cache =
         rngState := (rngState * rngMutliplier + rngIncrement).resize(config.xlen * 2 bits)
 
         rotr32((x >> 27).resize(config.xlen bits), count)
+      }
+
+      // Valid Tag Counter
+      private val tagEvicted = Bool() // Through Eviction
+      private val tagInvalidated = Bool() // Through e.g. write
+      private val tagInserted = Bool() // Newly Inserted Tags (former invalid tags)
+      private val validTags = RegInit(UInt(log2Up(sets * skews * ways + 1) bits).getZero)
+
+      tagEvicted := False
+      tagInvalidated := False
+      tagInserted := False
+      validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
+
+      private val lastInsertionSkew = RegInit(UInt(log2Up(skews) bits).getZero) 
+      private val lastInsertionSet = RegInit(UInt(log2Up(sets) bits).getZero) 
+
+      if (invalidTags > 0) {
+        when (validTags > totalWays - invalidTags) {
+          if (evictionPolicy == EvictionPolicy.LE) {
+            // Local Eviction
+            evictWayLocal()
+          }else {
+            // Global Eviction
+            evictWayGlobal()
+          }
+        }
       }
 
       // this logic is to avoid problems when incrementing and decrementing in the same cycle
@@ -257,15 +272,15 @@ private val cache =
         result
       }
 
-      private def evictWayLocal(skewIndex: UInt, setIndex: UInt): WayResult = {
+      private def evictWayLocal(): WayResult = {
         // Randomly Evict Way Locally
         val result = WayResult()
 
         val rngValue = pcg32()
 
         result.way := rngValue(log2Up(ways) - 1 downto 0).resized
-        result.skew := skewIndex
-        result.set := setIndex
+        result.skew := lastInsertionSkew
+        result.set := lastInsertionSet
 
         // Evict Entry
         when(cache(result.skew)(result.set)(result.way).valid) {
@@ -392,6 +407,11 @@ private val cache =
 
             // Updated TagInserted
             tagInserted := True
+
+            if (invalidTags > 0) {
+              lastInsertionSet := setIndex
+              lastInsertionSkew := skew
+            }
           }
 
           when(!found) {
@@ -400,7 +420,6 @@ private val cache =
               // Least Recently Used Approach
               val wayResult = oldestWay(skew, setIndex)
 
-              cache(wayResult.skew)(setIndex)(wayResult.way).valid := False
               increaseAgesUpTo(skew, setIndex, cache(wayResult.skew)(setIndex)(wayResult.way).age)
 
               cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
@@ -421,22 +440,6 @@ private val cache =
               cache(wayResult.skew)(setIndex)(wayResult.way).tag := tag
               cache(wayResult.skew)(setIndex)(wayResult.way).value := external.rsp.rdata
               cache(wayResult.skew)(setIndex)(wayResult.way).age := U(0).resized
-            }
-          }
-
-          if (invalidTags != 0) {
-            // Logic only required when invalid tags in use
-            when(
-              validTags - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized > totalWays - invalidTags
-            ) {
-              // Valid Tag count has been exceeded
-              if (evictionPolicy == EvictionPolicy.LE) {
-                // Local Eviction
-                evictWayLocal(skew, setIndex)
-              } else {
-                // Global Eviction
-                evictWayGlobal()
-              }
             }
           }
         }
