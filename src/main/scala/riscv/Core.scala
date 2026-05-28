@@ -68,8 +68,8 @@ object createStaticPipeline {
         ),
         new Cache(
           sets = 16,
-          ways = 4,
-          skews = 2,
+          ways = 2,
+          skews = 1,
           backbone.filterDBus,
           randomizedSetIndexing = true,
           replacementPolicy = ReplacementPolicy.RAN,

@@ -72,19 +72,20 @@ class Cache(
 
   private def getSetIndex(address: UInt, key: Vec[UInt]): UInt = {
     if (randomizedSetIndexing == true) {
-      val half = setIndexBits / 2
+      val half = (config.xlen - byteIndexBits - wordIndexBits) / 2
 
       // 4-Stage Feistel-Network
       var L = address(byteIndexBits + wordIndexBits, half bits)
       var R = address(byteIndexBits + wordIndexBits + half, half bits)
 
       for (i <- 0 until feistelStages) {
-        var temp = R ^ key(i)
-        R = L
-        L = temp
+        val F = R ^ key(i)
+        var temp = L ^ F
+        L = R
+        R = temp
       }
 
-      (L ## R).asUInt
+      (L ## R).asUInt(setIndexBits - 1 downto 0)
     } else {
       // Default to Standard Set-Associative Indexing
       address(byteIndexBits + wordIndexBits, setIndexBits bits)
@@ -103,10 +104,10 @@ class Cache(
   private def connect(_s: Stage, internal: MemBus, external: MemBus): Unit = {
     val cacheArea = pipeline plug new Area {
       // Initialize Key (4 Stages like CAESER)
-      private val key = Vec.fill(feistelStages)(Reg(UInt(setIndexBits / 2 bits)))
+      private val key = Vec.fill(feistelStages)(Reg(UInt((config.xlen - byteIndexBits - wordIndexBits) / 2 bits)))
 
       for (i <- 0 until feistelStages) {
-        key(i) := scala.util.Random.nextInt(1 << (setIndexBits / 2))
+        key(i) := scala.util.Random.nextInt(1 << ((config.xlen - byteIndexBits - wordIndexBits) / 2))
       }
 
       private val totalWays: Int = ways * skews * sets
@@ -392,7 +393,7 @@ private val cache =
           when(found) {
             if (replacementPolicy == ReplacementPolicy.PLRU) {
               // Increase Ages when PLRU is used
-              increaseAgesUpTo( // Conflict
+              increaseAgesUpTo(
                 skew,
                 setIndex,
                 ways - 1
