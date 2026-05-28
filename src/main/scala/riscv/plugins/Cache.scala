@@ -48,7 +48,7 @@ class Cache(
   private val setIndexBits = log2Up(sets)
 
   // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
-  assert(sets > 0 && setIndexBits % 2 == 0, "Set index bits must be divisable by 2")
+  assert(sets > 0 && (config.xlen - byteIndexBits - wordIndexBits) % 2 == 0, "Valid tags + set index bits must be divisable by 2")
 
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
