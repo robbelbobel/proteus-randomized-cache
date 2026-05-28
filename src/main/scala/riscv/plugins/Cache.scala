@@ -261,6 +261,10 @@ private val cache =
           tagEvicted := True
         }
 
+        if (replacementPolicy == ReplacementPolicy.PLRU) {
+          decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
+        }
+
         cache(result.skew)(result.set)(result.way).valid := False
 
         result
@@ -279,6 +283,10 @@ private val cache =
         // Evict Entry
         when(cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
+        }
+
+        if (replacementPolicy == ReplacementPolicy.PLRU) {
+          decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
         }
 
         cache(result.skew)(result.set)(result.way).valid := False
