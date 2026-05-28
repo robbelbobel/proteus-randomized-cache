@@ -27,8 +27,6 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    randomizedSetIndexing: Boolean =
-      true, // TODO: Enforce this better: Disable all features related to randomized caching
     replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.PLRU,
     skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0, // Invalid Tags
@@ -45,13 +43,13 @@ class Cache(
 
   private val byteIndexBits = log2Up(config.xlen / 8)
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
-  private val setIndexBits = log2Up(sets)
+  private val setBits = log2Up(sets)
 
   // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
   assert(sets > 0 && (config.xlen - byteIndexBits - wordIndexBits) % 2 == 0, "Valid tags + set index bits must be divisable by 2")
 
   private case class CacheEntry() extends Bundle {
-    val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits + setIndexBits) bits)
+    val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
     val age: UInt = UInt(log2Up(ways) bits)
     val valid: Bool = Bool()
@@ -71,29 +69,24 @@ class Cache(
   private val feistelStages = 4
 
   private def getSetIndex(address: UInt, key: Vec[UInt]): UInt = {
-    if (randomizedSetIndexing == true) {
-      val half = (config.xlen - byteIndexBits - wordIndexBits) / 2
+    val half = (config.xlen - byteIndexBits - wordIndexBits) / 2
 
-      // 4-Stage Feistel-Network
-      var L = address(byteIndexBits + wordIndexBits, half bits)
-      var R = address(byteIndexBits + wordIndexBits + half, half bits)
+    // 4-Stage Feistel-Network
+    var L = address(byteIndexBits + wordIndexBits, half bits)
+    var R = address(byteIndexBits + wordIndexBits + half, half bits)
 
-      for (i <- 0 until feistelStages) {
-        val F = R ^ key(i)
-        var temp = L ^ F
-        L = R
-        R = temp
-      }
-
-      (L ## R).asUInt(setIndexBits - 1 downto 0)
-    } else {
-      // Default to Standard Set-Associative Indexing
-      address(byteIndexBits + wordIndexBits, setIndexBits bits)
+    for (i <- 0 until feistelStages) {
+      val F = R ^ key(i)
+      var temp = L ^ F
+      L = R
+      R = temp
     }
+
+    (L ## R).asUInt(setBits - 1 downto 0)
   }
 
   private def getTagBits(address: UInt): UInt = {
-    address(byteIndexBits + wordIndexBits + setIndexBits until config.xlen)
+    address(byteIndexBits + wordIndexBits until config.xlen)
   }
 
   // get all address bits that determine whether two addresses fall into the same cache line
