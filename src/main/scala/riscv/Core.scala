@@ -59,9 +59,9 @@ object createStaticPipeline {
         new BranchTargetPredictor(pipeline.fetch, pipeline.execute, 8, conf.xlen),
         prefetcher,
         new Cache(
-          sets = 4,
-          ways = 2,
-          skews = 2,
+          sets = 16,
+          ways = 1,
+          skews = 1,
           backbone.filterIBus,
           Some(prefetcher),
           maxPrefetches = 2

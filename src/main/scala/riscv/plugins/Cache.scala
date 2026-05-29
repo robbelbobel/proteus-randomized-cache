@@ -45,8 +45,8 @@ class Cache(
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setBits = log2Up(sets)
 
-  // Set Index Bits Must Be Divisible By 2 (Needed for Feistel Algorithm)
-  assert(sets > 0 && (config.xlen - byteIndexBits - wordIndexBits) % 2 == 0, "Valid tags + set index bits must be divisable by 2")
+  // Tag bits (Needed for Feistel Algorithm)
+  assert((config.xlen - byteIndexBits - wordIndexBits) % 2 == 0, "Tag bits must be divisable by 2")
 
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits) bits)
@@ -231,7 +231,7 @@ private val cache =
       private def increaseAgesUpTo(skew: UInt, set: UInt, oldest: UInt): Unit = {
         for (i <- 0 until ways) {
           when(cache(skew)(set)(i).age < oldest) {
-            cache(skew)(set)(i).age := cache(skew)(set)(i).age + 1
+            cache(skew)(set)(i).age := (cache(skew)(set)(i).age + 1).resize(log2Up(ways) bits)
           }
         }
       }
@@ -239,7 +239,7 @@ private val cache =
       private def decreaseAgesUntil(skew: UInt, set: UInt, youngest: UInt): Unit = {
         for (i <- 0 until ways) {
           when(cache(skew)(set)(i).age > youngest) {
-            cache(skew)(set)(i).age := cache(skew)(set)(i).age - 1
+            cache(skew)(set)(i).age := (cache(skew)(set)(i).age - 1).resize(log2Up(ways) bits)
           }
         }
       }
