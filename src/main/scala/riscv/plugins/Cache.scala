@@ -38,7 +38,7 @@ class Cache(
   assert(skews >= 1, "Cache must exist out of 1 or more skews")
   assert(
     invalidTags < sets * ways * skews,
-    "Invalidtags cannot be larger than the total amount of ways in the cache."
+    "InvalidTags cannot be larger than the total amount of ways in the cache."
   )
 
   private val byteIndexBits = log2Up(config.xlen / 8)
@@ -144,6 +144,8 @@ private val cache =
         rotr32((x >> 27).resize(config.xlen bits), count)
       }
 
+      private val rngOutput = pcg32();
+
       // Valid Tag Counter
       private val tagEvicted = Bool() // Through Eviction
       private val tagInvalidated = Bool() // Through e.g. write
@@ -191,9 +193,7 @@ private val cache =
 
         if (skewApproach == SkewApproach.RS) {
           // Random Selection
-          val rngValue = pcg32()
-
-          (rngValue % skews).resize(log2Up(skews) bits)
+          (rngOutput % skews).resize(log2Up(skews) bits)
         } else {
           // Load Aware
           // Calculate usage of skews
@@ -206,7 +206,7 @@ private val cache =
 
           // Find skew with lowest usage
           val best = usage.reduceBalancedTree((a, b) =>
-            Mux(a.usage === b.usage, (Mux(pcg32()(0), a, b)), Mux(a.usage < b.usage, a, b))
+            Mux(a.usage === b.usage, (Mux(rngOutput(0), a, b)), Mux(a.usage < b.usage, a, b))
           )
 
           best.skew
@@ -248,11 +248,9 @@ private val cache =
         // Evicts a Way Globally -> Choose Randomly
         val result = WayResult()
 
-        val rngValue = pcg32()
-
-        result.way := rngValue(log2Up(ways) - 1 downto 0).resized
-        result.skew := rngValue(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
-        result.set := rngValue(
+        result.way := rngOutput(log2Up(ways) - 1 downto 0).resized
+        result.skew := rngOutput(log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways)).resized
+        result.set := rngOutput(
           log2Up(sets) + log2Up(ways) + log2Up(skews) - 1 downto log2Up(ways) + log2Up(skews)
         ).resized
 
@@ -274,9 +272,7 @@ private val cache =
         // Randomly Evict Way Locally
         val result = WayResult()
 
-        val rngValue = pcg32()
-
-        result.way := rngValue(log2Up(ways) - 1 downto 0).resized
+        result.way := rngOutput(log2Up(ways) - 1 downto 0).resized
         result.skew := lastInsertionSkew
         result.set := lastInsertionSet
 
@@ -430,12 +426,10 @@ private val cache =
               cache(wayResult.skew)(setIndex)(wayResult.way).age := U(0).resized
             } else {
               // Random Approach
-              val rngValue = pcg32()
-
               val wayResult = WayResult()
 
               wayResult.set := setIndex
-              wayResult.way := rngValue(log2Up(ways) downto 0).resized
+              wayResult.way := rngOutput(log2Up(ways) downto 0).resized // Prevent assignment overlap
               wayResult.skew := skew
 
               cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
