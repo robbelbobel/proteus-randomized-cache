@@ -7,16 +7,17 @@ import riscv.BaseIsa.RV32E.xlen
 import scala.util.Random
 import spinal.core.sim.SimDataPimper
 
-object ReplacementPolicy extends SpinalEnum {
-  val LRU, RAN = newElement() // Pseudo-LRU, Random
+object EvictionPolicy extends SpinalEnum {
+  val GRAN, GLRU, LRAN, LLRU =
+    newElement() // Global Random, Global Least Recently Used, Local Random, Local Least Recently Used
+}
+
+object InsertionPolicy extends SpinalEnum {
+  val RAN, LRU = newElement() // Random, Least Recently Used
 }
 
 object SkewApproach extends SpinalEnum {
   val RS, LA = newElement() // Random Selection, Load Aware
-}
-
-object EvictionPolicy extends SpinalEnum {
-  val LE, GE = newElement() // Local Eviction, Global Eviction
 }
 
 class Cache(
@@ -27,10 +28,10 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.LRU,
+    evictionPolicy: EvictionPolicy.E = EvictionPolicy.GLRU,
+    insertionPolicy: InsertionPolicy.E = InsertionPolicy.LRU,
     skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0, // Invalid Tags
-    evictionPolicy: EvictionPolicy.E = EvictionPolicy.GE,
     delay: Int = 1
 )(implicit config: Config)
     extends Plugin[Pipeline] {
@@ -51,7 +52,7 @@ class Cache(
   private case class CacheEntry() extends Bundle {
     val tag: UInt = UInt(config.xlen - (byteIndexBits + wordIndexBits) bits)
     val value: UInt = UInt(config.memBusWidth bits)
-    val age: UInt = UInt(log2Up(ways) bits)
+    val age: UInt = UInt(log2Up(skews * sets * ways) bits)
     val valid: Bool = Bool()
   }
 
@@ -97,10 +98,13 @@ class Cache(
   private def connect(_s: Stage, internal: MemBus, external: MemBus): Unit = {
     val cacheArea = pipeline plug new Area {
       // Initialize Key (4 Stages like CAESER)
-      private val key = Vec.fill(feistelStages)(Reg(UInt((config.xlen - byteIndexBits - wordIndexBits) / 2 bits)))
+      private val key =
+        Vec.fill(feistelStages)(Reg(UInt((config.xlen - byteIndexBits - wordIndexBits) / 2 bits)))
 
       for (i <- 0 until feistelStages) {
-        key(i) := scala.util.Random.nextInt(1 << ((config.xlen - byteIndexBits - wordIndexBits) / 2))
+        key(i) := scala.util.Random.nextInt(
+          1 << ((config.xlen - byteIndexBits - wordIndexBits) / 2)
+        )
       }
 
       private val totalWays: Int = ways * skews * sets
@@ -108,7 +112,7 @@ class Cache(
       private val idWidth = internal.config.idWidth
       private val maxId = UInt(idWidth bits).maxValue.intValue()
 
-private val cache =
+      private val cache =
         Vec.fill(skews)(Vec.fill(sets)(Vec.fill(ways)(RegInit(CacheEntry().getZero))))
 
       private val cacheHits = RegInit(UInt(config.xlen bits).getZero)
@@ -157,17 +161,22 @@ private val cache =
       tagInserted := False
       validTags := validTags - tagEvicted.asUInt.resized - tagInvalidated.asUInt.resized + tagInserted.asUInt.resized
 
-      private val lastInsertionSkew = RegInit(UInt(log2Up(skews) bits).getZero) 
-      private val lastInsertionSet = RegInit(UInt(log2Up(sets) bits).getZero) 
+      private val lastInsertionSkew = RegInit(UInt(log2Up(skews) bits).getZero)
+      private val lastInsertionSet = RegInit(UInt(log2Up(sets) bits).getZero)
 
       if (invalidTags > 0) {
-        when (validTags > totalWays - invalidTags) {
-          if (evictionPolicy == EvictionPolicy.LE) {
-            // Local Eviction
-            evictWayLocal()
-          }else {
-            // Global Eviction
-            evictWayGlobal()
+        when(validTags > totalWays - invalidTags) {
+          if (evictionPolicy == EvictionPolicy.GLRU) {
+            evictWayGLRU();
+          }
+          if (evictionPolicy == EvictionPolicy.GRAN) {
+            evictWayGRAN();
+          }
+          if (evictionPolicy == EvictionPolicy.LLRU) {
+            evictWayLLRU();
+          }
+          if (evictionPolicy == EvictionPolicy.LRAN) {
+            evictWayLRAN();
           }
         }
       }
@@ -213,38 +222,79 @@ private val cache =
         }
       }
 
-      private def oldestWay(skew: UInt, set: UInt): WayResult = {
+      private def oldestWayGlobal(): WayResult = {
         val result = WayResult()
-        result.set := set
-        result.skew := skew
+        result.skew := 0
+        result.set := 0
         result.way := 0
 
-        for (i <- 0 until ways) {
-          when(cache(skew)(set)(i).age === (ways - 1) || !cache(skew)(set)(i).valid) {
-            result.way := i
+        for (k <- 0 until skews) {
+          for (j <- 0 until sets) {
+            for (i <- 0 until ways) {
+              when(cache(k)(j)(i).age === ((skews * sets * ways) - 1) || !cache(k)(j)(i).valid) {
+                result.skew := k
+                result.set := j
+                result.way := i
+              }
+            }
           }
         }
 
         result
       }
 
-      private def increaseAgesUpTo(skew: UInt, set: UInt, oldest: UInt): Unit = {
-        for (i <- 0 until ways) {
-          when(cache(skew)(set)(i).age < oldest) {
-            cache(skew)(set)(i).age := (cache(skew)(set)(i).age + 1).resize(log2Up(ways) bits)
+      private def oldestWayLocal(skew: UInt, set: UInt): WayResult = {
+        val result = WayResult()
+        result.skew := skew
+        result.set := set
+        result.way := 0
+
+        when(!(0 until ways).map(i => cache(skew)(set)(i).valid).reduce(_ && _)) {
+          // Find Free Way
+          for (i <- 0 until ways) {
+            when(!cache(skew)(set)(i).valid) {
+              result.way := i
+            }
+          }
+        } otherwise {
+          // Find Oldest Way
+          result.way := (0 until ways)
+            .map(i => U(i, log2Up(ways) bits))
+            .reduceBalancedTree((a, b) =>
+              Mux(cache(skew)(set)(a).age > cache(skew)(set)(b).age, a, b)
+            )
+        }
+
+        result
+      }
+
+      /** Global Eviction * */
+      private def increaseAgesUpTo(oldest: UInt): Unit = {
+        for (k <- 0 until skews) {
+          for (j <- 0 until sets) {
+            for (i <- 0 until ways) {
+              when(cache(k)(j)(i).age < oldest) {
+                cache(k)(j)(i).age := (cache(k)(j)(i).age + 1).resized
+              }
+            }
           }
         }
       }
 
-      private def decreaseAgesUntil(skew: UInt, set: UInt, youngest: UInt): Unit = {
-        for (i <- 0 until ways) {
-          when(cache(skew)(set)(i).age > youngest) {
-            cache(skew)(set)(i).age := (cache(skew)(set)(i).age - 1).resize(log2Up(ways) bits)
+      private def decreaseAgesUntil(youngest: UInt): Unit = {
+        for (k <- 0 until skews) {
+          for (j <- 0 until sets) {
+            for (i <- 0 until ways) {
+              when(cache(k)(j)(i).age > youngest) {
+                cache(k)(j)(i).age := (cache(k)(j)(i).age - 1).resized
+              }
+            }
           }
         }
       }
 
-      private def evictWayGlobal(): WayResult = {
+      /** GLOBAL EVICTION * */
+      private def evictWayGRAN(): WayResult = {
         // Evicts a Way Globally -> Choose Randomly
         val result = WayResult()
 
@@ -259,16 +309,31 @@ private val cache =
           tagEvicted := True
         }
 
-        if (replacementPolicy == ReplacementPolicy.LRU) {
-          decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
-        }
+        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
 
         cache(result.skew)(result.set)(result.way).valid := False
 
         result
       }
 
-      private def evictWayLocal(): WayResult = {
+      private def evictWayGLRU(): WayResult = {
+        // Evicts a Way Globally with LRU
+        val result = oldestWayGlobal()
+
+        // Evict Entry
+        when(cache(result.skew)(result.set)(result.way).valid) {
+          tagEvicted := True
+        }
+
+        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
+
+        cache(result.skew)(result.set)(result.way).valid := False
+
+        result
+      }
+
+      /** LOCAL EVICTION * */
+      private def evictWayLRAN(): WayResult = {
         // Randomly Evict Way Locally
         val result = WayResult()
 
@@ -281,9 +346,23 @@ private val cache =
           tagEvicted := True
         }
 
-        if (replacementPolicy == ReplacementPolicy.LRU) {
-          decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
+        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
+
+        cache(result.skew)(result.set)(result.way).valid := False
+
+        result
+      }
+
+      private def evictWayLLRU(): WayResult = {
+        // Evicts a Way Globally with LRU
+        val result = oldestWayLocal(lastInsertionSkew, lastInsertionSet)
+
+        // Evict Entry
+        when(cache(result.skew)(result.set)(result.way).valid) {
+          tagEvicted := True
         }
+
+        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
 
         cache(result.skew)(result.set)(result.way).valid := False
 
@@ -346,16 +425,11 @@ private val cache =
 
         when(hit.valid && cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).valid) {
           // Rsp already stored in cache -> Decrease Age Only
-          if (replacementPolicy == ReplacementPolicy.LRU) {
-            increaseAgesUpTo(
-              hit.payload.skew,
-              hit.payload.set,
-              cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age
-            )
+          increaseAgesUpTo(
+            cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age
+          )
 
-            cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age := U(0).resized
-          }
-
+          cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).age := U(0).resized
           cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).value := external.rsp.rdata
         }
 
@@ -388,14 +462,7 @@ private val cache =
           }
 
           when(found) {
-            if (replacementPolicy == ReplacementPolicy.LRU) {
-              // Increase Ages when LRU is used
-              increaseAgesUpTo(
-                skew,
-                setIndex,
-                ways - 1
-              )
-            }
+            increaseAgesUpTo((skews * sets * ways) - 1)
 
             // Free Entry Found -> Insert Here
             cache(skew)(setIndex)(freeidx).valid := True
@@ -412,13 +479,13 @@ private val cache =
             }
           }
 
-          when(!found) {
+          when (!found) {
             // No Free Ways -> Use Replacement Policy
-            if (replacementPolicy == ReplacementPolicy.LRU) {
+            if (insertionPolicy == InsertionPolicy.LRU) {
               // Least Recently Used Approach
-              val wayResult = oldestWay(skew, setIndex)
+              val wayResult = oldestWayLocal(skew, setIndex)
 
-              increaseAgesUpTo(skew, setIndex, cache(wayResult.skew)(setIndex)(wayResult.way).age)
+              increaseAgesUpTo(cache(wayResult.skew)(setIndex)(wayResult.way).age)
 
               cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
               cache(wayResult.skew)(setIndex)(wayResult.way).tag := tag
@@ -429,8 +496,12 @@ private val cache =
               val wayResult = WayResult()
 
               wayResult.set := setIndex
-              wayResult.way := rngOutput(log2Up(ways) downto 0).resized // Prevent assignment overlap
+              wayResult.way := rngOutput(
+                log2Up(ways) downto 0
+              ).resized // Prevent assignment overlap
               wayResult.skew := skew
+
+              increaseAgesUpTo(cache(wayResult.skew)(setIndex)(wayResult.way).age)
 
               cache(wayResult.skew)(setIndex)(wayResult.way).valid := True
               cache(wayResult.skew)(setIndex)(wayResult.way).tag := tag
@@ -639,13 +710,12 @@ private val cache =
         val cacheSet = cache(targetWay.skew)(setIndex)
         val tagBits = getTagBits(address)
 
-        when(targetWay.valid) { // Conflict
-          cacheSet(targetWay.payload.way).age := U(0).resized
+        when(targetWay.valid) {
           increaseAgesUpTo(
-            targetWay.payload.skew,
-            setIndex,
             cacheSet(targetWay.payload.way).age
           )
+
+          cacheSet(targetWay.payload.way).age := U(0).resized
 
           returnFromCache(cacheSet(targetWay.payload.way))
         } otherwise {
@@ -710,8 +780,8 @@ private val cache =
                   }
 
                   // Maximize Age of Line
-                  decreaseAgesUntil(U(j, log2Up(skews) bits), indexBits, cache(j)(indexBits)(i).age)
-                  cache(j)(indexBits)(i).age := U(ways - 1, log2Up(ways) bits)
+                  decreaseAgesUntil(cache(j)(indexBits)(i).age)
+                  cache(j)(indexBits)(i).age := U((skews * sets * ways) - 1, log2Up(skews * sets * ways) bits)
                 }
               }
             }
