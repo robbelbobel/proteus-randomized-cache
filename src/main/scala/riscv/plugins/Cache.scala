@@ -479,7 +479,7 @@ class Cache(
             }
           }
 
-          when (!found) {
+          when(!found) {
             // No Free Ways -> Use Replacement Policy
             if (insertionPolicy == InsertionPolicy.LRU) {
               // Least Recently Used Approach
@@ -781,7 +781,10 @@ class Cache(
 
                   // Maximize Age of Line
                   decreaseAgesUntil(cache(j)(indexBits)(i).age)
-                  cache(j)(indexBits)(i).age := U((skews * sets * ways) - 1, log2Up(skews * sets * ways) bits)
+                  cache(j)(indexBits)(i).age := U(
+                    (skews * sets * ways) - 1,
+                    log2Up(skews * sets * ways) bits
+                  )
                 }
               }
             }
