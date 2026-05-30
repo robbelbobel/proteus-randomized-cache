@@ -389,7 +389,7 @@ private val cache =
 
           when(found) {
             if (replacementPolicy == ReplacementPolicy.LRU) {
-              // Increase Ages when PLRU is used
+              // Increase Ages when LRU is used
               increaseAgesUpTo(
                 skew,
                 setIndex,
