@@ -8,7 +8,7 @@ import scala.util.Random
 import spinal.core.sim.SimDataPimper
 
 object ReplacementPolicy extends SpinalEnum {
-  val PLRU, RAN = newElement() // Pseudo-LRU, Random
+  val LRU, RAN = newElement() // Pseudo-LRU, Random
 }
 
 object SkewApproach extends SpinalEnum {
@@ -27,7 +27,7 @@ class Cache(
     prefetcher: Option[PrefetchService] = None,
     maxPrefetches: Int = 1,
     cacheable: (UInt => Bool) = (_ => True),
-    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.PLRU,
+    replacementPolicy: ReplacementPolicy.E = ReplacementPolicy.LRU,
     skewApproach: SkewApproach.E = SkewApproach.LA,
     invalidTags: Int = 0, // Invalid Tags
     evictionPolicy: EvictionPolicy.E = EvictionPolicy.GE,
@@ -144,7 +144,7 @@ private val cache =
         rotr32((x >> 27).resize(config.xlen bits), count)
       }
 
-      private val rngOutput = pcg32();
+      private var rngOutput = pcg32();
 
       // Valid Tag Counter
       private val tagEvicted = Bool() // Through Eviction
@@ -259,7 +259,7 @@ private val cache =
           tagEvicted := True
         }
 
-        if (replacementPolicy == ReplacementPolicy.PLRU) {
+        if (replacementPolicy == ReplacementPolicy.LRU) {
           decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
         }
 
@@ -281,7 +281,7 @@ private val cache =
           tagEvicted := True
         }
 
-        if (replacementPolicy == ReplacementPolicy.PLRU) {
+        if (replacementPolicy == ReplacementPolicy.LRU) {
           decreaseAgesUntil(result.skew, result.set, cache(result.skew)(result.set)(result.way).age)
         }
 
@@ -346,7 +346,7 @@ private val cache =
 
         when(hit.valid && cache(hit.payload.skew)(hit.payload.set)(hit.payload.way).valid) {
           // Rsp already stored in cache -> Decrease Age Only
-          if (replacementPolicy == ReplacementPolicy.PLRU) {
+          if (replacementPolicy == ReplacementPolicy.LRU) {
             increaseAgesUpTo(
               hit.payload.skew,
               hit.payload.set,
@@ -388,7 +388,7 @@ private val cache =
           }
 
           when(found) {
-            if (replacementPolicy == ReplacementPolicy.PLRU) {
+            if (replacementPolicy == ReplacementPolicy.LRU) {
               // Increase Ages when PLRU is used
               increaseAgesUpTo(
                 skew,
@@ -414,7 +414,7 @@ private val cache =
 
           when(!found) {
             // No Free Ways -> Use Replacement Policy
-            if (replacementPolicy == ReplacementPolicy.PLRU) {
+            if (replacementPolicy == ReplacementPolicy.LRU) {
               // Least Recently Used Approach
               val wayResult = oldestWay(skew, setIndex)
 
