@@ -60,6 +60,7 @@ class Cache(
     val set: UInt = UInt(log2Up(sets) bits)
     val skew: UInt = UInt(log2Up(skews) bits)
     val way: UInt = UInt(log2Up(ways) bits)
+    val valid: Bool = Bool()
   }
 
   class SkewUsage() extends Bundle {
@@ -227,18 +228,22 @@ class Cache(
         result.skew := 0
         result.set := 0
         result.way := 0
+        result.valid := False
 
         for (k <- 0 until skews) {
           for (j <- 0 until sets) {
             for (i <- 0 until ways) {
-              when(cache(k)(j)(i).age === ((skews * sets * ways) - 1) || !cache(k)(j)(i).valid) {
+              when(cache(k)(j)(i).valid && cache(k)(j)(i).age === (validTags - 1)) {
                 result.skew := k
                 result.set := j
                 result.way := i
+                result.valid := True
               }
             }
           }
         }
+
+        assert(result.valid, "No global oldest way found!")
 
         result
       }
@@ -247,23 +252,15 @@ class Cache(
         val result = WayResult()
         result.skew := skew
         result.set := set
-        result.way := 0
+        result.valid := True
 
-        when(!(0 until ways).map(i => cache(skew)(set)(i).valid).reduce(_ && _)) {
-          // Find Free Way
-          for (i <- 0 until ways) {
-            when(!cache(skew)(set)(i).valid) {
-              result.way := i
-            }
-          }
-        } otherwise {
-          // Find Oldest Way
-          result.way := (0 until ways)
-            .map(i => U(i, log2Up(ways) bits))
-            .reduceBalancedTree((a, b) =>
-              Mux(cache(skew)(set)(a).age > cache(skew)(set)(b).age, a, b)
-            )
-        }
+        // Find Oldest Way
+        result.way := (0 until ways)
+          .map(i => U(i, log2Up(ways) bits))
+          .reduceBalancedTree((a, b) =>
+            Mux((cache(skew)(set)(a).valid ## cache(skew)(set)(a).age).asUInt > 
+              (cache(skew)(set)(b).valid ## cache(skew)(set)(b).age).asUInt, a, b)
+          )
 
         result
       }
@@ -305,11 +302,10 @@ class Cache(
         ).resized
 
         // Evict Entry
-        when(cache(result.skew)(result.set)(result.way).valid) {
+        when (cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
+          decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
         }
-
-        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
 
         cache(result.skew)(result.set)(result.way).valid := False
 
@@ -321,9 +317,7 @@ class Cache(
         val result = oldestWayGlobal()
 
         // Evict Entry
-        when(cache(result.skew)(result.set)(result.way).valid) {
-          tagEvicted := True
-        }
+        tagEvicted := True
 
         decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
 
@@ -344,9 +338,8 @@ class Cache(
         // Evict Entry
         when(cache(result.skew)(result.set)(result.way).valid) {
           tagEvicted := True
+          decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
         }
-
-        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
 
         cache(result.skew)(result.set)(result.way).valid := False
 
@@ -777,14 +770,14 @@ class Cache(
                     cache(j)(indexBits)(i).valid := False
                     // Update Tag Invalidated
                     tagInvalidated := True
-                  }
 
-                  // Maximize Age of Line
-                  decreaseAgesUntil(cache(j)(indexBits)(i).age)
-                  cache(j)(indexBits)(i).age := U(
-                    (skews * sets * ways) - 1,
-                    log2Up(skews * sets * ways) bits
-                  )
+                    // Maximize Age of Line
+                    decreaseAgesUntil(cache(j)(indexBits)(i).age)
+                    cache(j)(indexBits)(i).age := U(
+                      (skews * sets * ways) - 1,
+                      log2Up(skews * sets * ways) bits
+                    )
+                  }
                 }
               }
             }
