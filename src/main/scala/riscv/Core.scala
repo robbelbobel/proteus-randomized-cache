@@ -67,12 +67,12 @@ object createStaticPipeline {
           maxPrefetches = 2
         ),
         new Cache(
-sets = 4,
+sets = 8,
 ways = 2,
 skews = 2,
           backbone.filterDBus,
-evictionPolicy = EvictionPolicy.LLRU,
-insertionPolicy = InsertionPolicy.LRU,
+evictionPolicy = EvictionPolicy.GRAN,
+insertionPolicy = InsertionPolicy.RAN,
 skewApproach = SkewApproach.LA,
 invalidTags = 8,
           cacheable = (_ >= 0x80000000L)

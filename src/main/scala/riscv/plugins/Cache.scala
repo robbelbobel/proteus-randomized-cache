@@ -42,6 +42,7 @@ class Cache(
     "InvalidTags cannot be larger than the total amount of ways in the cache."
   )
 
+
   private val byteIndexBits = log2Up(config.xlen / 8)
   private val wordIndexBits = log2Up(config.memBusWidth / config.xlen)
   private val setBits = log2Up(sets)
@@ -165,8 +166,10 @@ class Cache(
       private val lastInsertionSkew = RegInit(UInt(log2Up(skews) bits).getZero)
       private val lastInsertionSet = RegInit(UInt(log2Up(sets) bits).getZero)
 
+      private val cacheBusy: Bool = external.rsp.valid || internal.cmd.valid
+
       if (invalidTags > 0) {
-        when(validTags > totalWays - invalidTags) {
+        when(!cacheBusy && validTags > totalWays - invalidTags) {
           if (evictionPolicy == EvictionPolicy.GLRU) {
             evictWayGLRU();
           }
