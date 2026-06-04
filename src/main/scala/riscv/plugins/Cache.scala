@@ -150,7 +150,7 @@ class Cache(
         rotr32((x >> 27).resize(config.xlen bits), count)
       }
 
-      private var rngOutput = pcg32();
+      private val rngOutput = pcg32();
 
       // Valid Tag Counter
       private val tagEvicted = Bool() // Through Eviction
@@ -320,9 +320,10 @@ class Cache(
         val result = oldestWayGlobal()
 
         // Evict Entry
-        tagEvicted := True
-
-        decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
+        when (cache(result.skew)(result.set)(result.way).valid) {
+          tagEvicted := True
+          decreaseAgesUntil(cache(result.skew)(result.set)(result.way).age)
+        }
 
         cache(result.skew)(result.set)(result.way).valid := False
 

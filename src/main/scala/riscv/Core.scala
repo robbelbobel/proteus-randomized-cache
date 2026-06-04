@@ -67,14 +67,14 @@ object createStaticPipeline {
           maxPrefetches = 2
         ),
         new Cache(
-sets = 8,
-ways = 2,
-skews = 2,
+        sets = 16,
+        ways = 2,
+        skews = 2,
           backbone.filterDBus,
-evictionPolicy = EvictionPolicy.GRAN,
-insertionPolicy = InsertionPolicy.RAN,
-skewApproach = SkewApproach.LA,
-invalidTags = 8,
+        evictionPolicy = EvictionPolicy.LLRU,
+        insertionPolicy = InsertionPolicy.LRU,
+        skewApproach = SkewApproach.LA,
+        invalidTags = 0,
           cacheable = (_ >= 0x80000000L)
         ),
         new CsrFile(pipeline.writeback, pipeline.writeback), // TODO: ugly
